@@ -19,8 +19,8 @@ use pwm::PwmTimer;
 use static_cell::StaticCell;
 use stm32_metapac::{self as pac, interrupt};
 use zencan_node::{
-    Node,
-    common::{NodeId, messages::NmtState},
+    Node, Callbacks,
+    common::{NodeId, nmt::NmtState},
 };
 
 use crate::{gpio::DynamicPin, step_timer::StepTimer};
@@ -284,6 +284,7 @@ fn main() -> ! {
     // node process call. This will be called in the CAN IRQ context, and will set a notify to cause
     // the CAN task to promptly execute.
     zencan::NODE_MBOX.set_process_notify_callback(&notify_can_task);
+    zencan::NODE_MBOX.set_transmit_notify_callback(&notify_can_task);
 
     pac::DBGMCU.cr().modify(|w| {
         w.set_dbg_standby(true);
@@ -303,16 +304,18 @@ fn main() -> ! {
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM2);
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM5);
     }
-    let node = Node::init(
+    
+    // Use the UID register to set a unique serial number
+    zencan::OBJECT1018.set_serial(get_serial());
+    
+    let callbacks = Callbacks::new();
+    let node = Node::new(
         NodeId::new(11).unwrap(),
+        callbacks,
         &zencan::NODE_MBOX,
         &zencan::NODE_STATE,
         &zencan::OD_TABLE,
     );
-    // Use the UID register to set a unique serial number
-    zencan::OBJECT1018.set_serial(get_serial());
-
-    let node = node.finalize();
 
     // Create a flag to communicate status between CAN task and control task
     let operational_flag = portable_atomic::AtomicBool::new(false);
@@ -381,7 +384,7 @@ async fn adc_task() -> Infallible {
 
 /// Task to run the zencan process
 async fn can_task(
-    mut node: Node,
+    mut node: Node<'_>,
     mut can_tx: fdcan::Tx<FdCan2, NormalOperationMode>,
     process_notify: &Notify,
     control_notify: &Notify,
@@ -391,12 +394,16 @@ async fn can_task(
     loop {
         lilos::time::with_timeout(Duration::from_millis(10), process_notify.until_next()).await;
         let time_us = epoch.elapsed().0 * 1000;
-        let objects_updated = node.process(time_us, &mut |msg| {
+        let objects_updated = node.process(time_us);
+        
+        // Transmit any pending messages
+        while let Some(msg) = zencan::NODE_MBOX.next_transmit_message() {
             let header = zencan_to_fdcan_header(&msg);
             if can_tx.transmit(header, msg.data()).is_err() {
                 defmt::error!("Error transmitting CAN message");
             }
-        });
+        }
+        
         if objects_updated {
             control_notify.notify();
         }
