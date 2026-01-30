@@ -3,7 +3,7 @@
 # RPDO0 is used to receive velocity command
 [rpdo.0]
 enabled = true
-cob = 0x201
+cob_id = 0x201
 transmission_type = 254
 mappings = [
     { index=0x3101, sub=1, size = 16 },

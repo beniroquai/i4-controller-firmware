@@ -1,11 +1,26 @@
 device_name = "I4 Controller"
+software_version = "0.0.2"
 hardware_version = "rev1"
 heartbeat_period = 1000
+autostart = "enabled"
 
 [identity]
 vendor_id = 0xCAFE
 product_code = 10000
 revision_number = 1
+
+[pdos]
+# RPDO0 is used to receive velocity command
+[pdos.rpdo.0]
+enabled = true
+cob_id = 0x201
+add_node_id = false
+transmission_type = 254
+mappings = [
+    { index=0x3101, sub=1, size = 16 },
+    { index=0x3101, sub=2, size = 16 }
+]
+
 
 [[objects]]
 index = 0x2000
@@ -28,6 +43,7 @@ data_type = "int8"
 access_type = "rw"
 pdo_mapping = "none"
 persist = true
+default_value = 1
 
 # Specifies an acceleration limit, in steps/s/s
 # Used in stepper mode. A value of 0 disables acceleration limits.
@@ -39,6 +55,7 @@ data_type = "uint16"
 access_type = "rw"
 pdo_mapping = "none"
 persist = true
+default_value = 1500
 
 # Specifies the peak duty cycle in stepper mode
 [[objects]]
@@ -49,6 +66,7 @@ data_type = "uint16"
 access_type = "rw"
 pdo_mapping = "none"
 persist = true
+default_value = 18000
 
 # An array of duty cycle commands, one per channel
 # Used in voltage mode

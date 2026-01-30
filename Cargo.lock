@@ -366,7 +366,7 @@ dependencies = [
  "rtt-target",
  "static_cell",
  "stm32-metapac",
- "zencan-build",
+ "zencan-build 0.0.3",
  "zencan-node",
 ]
 
@@ -876,19 +876,52 @@ dependencies = [
 
 [[package]]
 name = "zencan-build"
-version = "0.0.3"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63f974ba39e3eda16b259f3acb4ee3b3b8bfd34082cef7178c6aed77c1657e03"
 dependencies = [
  "prettyplease",
  "proc-macro2",
  "quote",
  "snafu",
  "syn 2.0.103",
- "zencan-common",
+ "zencan-common 0.0.1",
+]
+
+[[package]]
+name = "zencan-build"
+version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cbee5f146fe5dd15a00ecda92f344189580afb611184df6a7f4aa7bd8109599"
+dependencies = [
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "snafu",
+ "syn 2.0.103",
+ "zencan-common 0.0.3",
+]
+
+[[package]]
+name = "zencan-common"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25fbb1e254c892956b3cc3a81724b39ebce2f2d544254af90d69ba9ab0468793"
+dependencies = [
+ "critical-section",
+ "defmt-or-log",
+ "int-enum",
+ "regex",
+ "serde",
+ "snafu",
+ "toml",
 ]
 
 [[package]]
 name = "zencan-common"
 version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74ae54b34a85e1241e036d7c81b4ab7e88a1a78e4d24744421bacf281e0554b"
 dependencies = [
  "chrono",
  "critical-section",
@@ -904,18 +937,22 @@ dependencies = [
 [[package]]
 name = "zencan-macro"
 version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "338af6c9e17dba97f80c804f2c5a77bc04546441512dda41d516fbcbfbc74867"
 dependencies = [
  "darling",
  "proc-macro2",
  "quote",
  "syn 2.0.103",
- "zencan-build",
- "zencan-common",
+ "zencan-build 0.0.1",
+ "zencan-common 0.0.1",
 ]
 
 [[package]]
 name = "zencan-node"
 version = "0.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b49ad68f5458f72ff157f87b7446ab3d1839f4444e173193643bdbd8c868361d"
 dependencies = [
  "crc16",
  "critical-section",
@@ -925,6 +962,6 @@ dependencies = [
  "futures",
  "portable-atomic",
  "static_cell",
- "zencan-common",
+ "zencan-common 0.0.3",
  "zencan-macro",
 ]
