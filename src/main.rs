@@ -19,8 +19,7 @@ use pwm::PwmTimer;
 use static_cell::StaticCell;
 use stm32_metapac::{self as pac, interrupt};
 use zencan_node::{
-    Node,
-    common::{NodeId, messages::NmtState},
+    common::{nmt::NmtState, NodeId}, Callbacks, Node
 };
 
 use crate::{gpio::DynamicPin, step_timer::StepTimer};
@@ -34,6 +33,7 @@ use panic_probe as _;
 use rtt_target::{rtt_init, set_defmt_channel};
 
 mod adc;
+mod can;
 mod current_control;
 mod gpio;
 mod pwm;
@@ -57,23 +57,9 @@ fn get_serial() -> u32 {
     u32::from_le_bytes(digest.0[0..4].try_into().unwrap())
 }
 
-struct FdCan2 {}
-
-unsafe impl fdcan::message_ram::Instance for FdCan2 {
-    const MSG_RAM: *mut fdcan::message_ram::RegisterBlock = pac::FDCANRAM2.as_ptr() as _;
-}
-unsafe impl fdcan::Instance for FdCan2 {
-    const REGISTERS: *mut fdcan::RegisterBlock = pac::FDCAN2.as_ptr() as _;
-}
-
 static X_STEPPER: GroundedCell<Stepper> = GroundedCell::uninit();
 static Y_STEPPER: GroundedCell<Stepper> = GroundedCell::uninit();
 
-/// RX object for CAN IRQ to access
-static CAN_RX: GroundedCell<fdcan::Rx<FdCan2, NormalOperationMode, Fifo0>> = GroundedCell::uninit();
-/// control object for CAN IRQ to access
-static CAN_CTRL: GroundedCell<fdcan::FdCanControl<FdCan2, NormalOperationMode>> =
-    GroundedCell::uninit();
 /// Notify for NodeMbox notify callback to access
 static CAN_NOTIFY: Notify = Notify::new();
 
@@ -81,7 +67,7 @@ static TIMER1: StaticCell<PwmTimer<TimAdv>> = StaticCell::new();
 static TIMER3: StaticCell<PwmTimer<TimGp16>> = StaticCell::new();
 static TIMER8: StaticCell<PwmTimer<TimAdv>> = StaticCell::new();
 
-const MIN_STEP_FREQ: i32 = 8;
+const MIN_STEP_FREQ: i32 = 16;
 const MAX_STEP_FREQ: i32 = 2000;
 
 fn notify_can_task() {
@@ -239,51 +225,16 @@ fn main() -> ! {
     let mut can_tx_pin = gpios.PB13;
     can_tx_pin.set_high();
     can_tx_pin.set_as_output(gpio::Speed::High);
-
     can_rx_pin.set_as_af(9, gpio::AFType::Input);
     can_tx_pin.set_as_af(9, gpio::AFType::OutputPushPull);
 
-    let mut can = FdCan::new(FdCan2 {}).into_config_mode();
-    let can_config = FdCanConfig::default()
-        .set_automatic_retransmit(false)
-        .set_frame_transmit(fdcan::config::FrameTransmissionConfig::ClassicCanOnly)
-        .set_data_bit_timing(DataBitTiming {
-            transceiver_delay_compensation: false,
-            prescaler: NonZeroU8::new(8).unwrap(),
-            seg1: NonZeroU8::new(13).unwrap(),
-            seg2: NonZeroU8::new(2).unwrap(),
-            sync_jump_width: NonZeroU8::new(1).unwrap(),
-        })
-        .set_nominal_bit_timing(fdcan::config::NominalBitTiming {
-            prescaler: NonZeroU16::new(8).unwrap(),
-            seg1: NonZeroU8::new(13).unwrap(),
-            seg2: NonZeroU8::new(2).unwrap(),
-            sync_jump_width: NonZeroU8::new(1).unwrap(),
-        })
-        .set_global_filter(GlobalFilter {
-            handle_standard_frames: fdcan::config::NonMatchingFilter::IntoRxFifo0,
-            handle_extended_frames: fdcan::config::NonMatchingFilter::IntoRxFifo0,
-            reject_remote_standard_frames: false,
-            reject_remote_extended_frames: false,
-        });
-
-    can.apply_config(can_config);
-    let mut can = can.into_normal();
-
-    can.enable_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg);
-    can.enable_interrupt_line(fdcan::config::InterruptLine::_1, true);
-    let (can_control, can_tx, can_rx0, _can_rx1) = can.split();
-
-    // Store CAN objects for receive IRQ
-    unsafe {
-        core::ptr::write(CAN_CTRL.get(), can_control);
-        core::ptr::write(CAN_RX.get(), can_rx0);
-    }
+    can::init_can();
 
     // Register a hook for notification when messages are received that are awaiting handling by
     // node process call. This will be called in the CAN IRQ context, and will set a notify to cause
     // the CAN task to promptly execute.
     zencan::NODE_MBOX.set_process_notify_callback(&notify_can_task);
+    zencan::NODE_MBOX.set_transmit_notify_callback(&can::transmit_notify_handler);
 
     pac::DBGMCU.cr().modify(|w| {
         w.set_dbg_standby(true);
@@ -297,22 +248,26 @@ fn main() -> ! {
     // Configure the systick timer for 1kHz ticks at 16MHz.
     lilos::time::initialize_sys_tick(&mut cp.SYST, CLK_FREQ);
 
+    // Use the UID register to set a unique serial number
+    zencan::OBJECT1018.set_serial(get_serial());
+
+    // Node ID is hardcoded for now
+    let callbacks = Callbacks::default();
+    let node = Node::new(
+        NodeId::new(11).unwrap(),
+        callbacks,
+        &zencan::NODE_MBOX,
+        &zencan::NODE_STATE,
+        &zencan::OD_TABLE,
+    );
+
     unsafe {
         cortex_m::interrupt::enable();
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::FDCAN2_IT0);
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM2);
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM5);
     }
-    let node = Node::init(
-        NodeId::new(11).unwrap(),
-        &zencan::NODE_MBOX,
-        &zencan::NODE_STATE,
-        &zencan::OD_TABLE,
-    );
-    // Use the UID register to set a unique serial number
-    zencan::OBJECT1018.set_serial(get_serial());
 
-    let node = node.finalize();
 
     // Create a flag to communicate status between CAN task and control task
     let operational_flag = portable_atomic::AtomicBool::new(false);
@@ -325,7 +280,6 @@ fn main() -> ! {
             pin!(adc_task()),
             pin!(can_task(
                 node,
-                can_tx,
                 &CAN_NOTIFY,
                 &control_notify,
                 &operational_flag
@@ -343,23 +297,6 @@ fn main() -> ! {
     );
 }
 
-fn zencan_to_fdcan_header(msg: &zencan_node::common::CanMessage) -> fdcan::frame::TxFrameHeader {
-    let id: fdcan::id::Id = match msg.id() {
-        zencan_node::common::messages::CanId::Extended(id) => {
-            fdcan::id::ExtendedId::new(id).unwrap().into()
-        }
-        zencan_node::common::messages::CanId::Std(id) => {
-            fdcan::id::StandardId::new(id).unwrap().into()
-        }
-    };
-    fdcan::frame::TxFrameHeader {
-        len: msg.dlc,
-        frame_format: fdcan::frame::FrameFormat::Standard,
-        id,
-        bit_rate_switching: false,
-        marker: None,
-    }
-}
 
 /// Task to read the ISENSE adc channels
 ///
@@ -381,8 +318,7 @@ async fn adc_task() -> Infallible {
 
 /// Task to run the zencan process
 async fn can_task(
-    mut node: Node,
-    mut can_tx: fdcan::Tx<FdCan2, NormalOperationMode>,
+    mut node: Node<'static>,
     process_notify: &Notify,
     control_notify: &Notify,
     operational_flag: &AtomicBool,
@@ -391,12 +327,7 @@ async fn can_task(
     loop {
         lilos::time::with_timeout(Duration::from_millis(10), process_notify.until_next()).await;
         let time_us = epoch.elapsed().0 * 1000;
-        let objects_updated = node.process(time_us, &mut |msg| {
-            let header = zencan_to_fdcan_header(&msg);
-            if can_tx.transmit(header, msg.data()).is_err() {
-                defmt::error!("Error transmitting CAN message");
-            }
-        });
+        let objects_updated = node.process(time_us);
         if objects_updated {
             control_notify.notify();
         }
@@ -525,34 +456,6 @@ async fn control_task(
                 break;
             }
         }
-    }
-}
-
-#[pac::interrupt]
-unsafe fn FDCAN2_IT0() {
-    // safety: Accept for during boot-up when we set it, we only access in this interrupt
-    let ctrl = unsafe { &mut *CAN_CTRL.get() };
-    let rx = unsafe { &mut *CAN_RX.get() };
-
-    ctrl.clear_interrupt(fdcan::interrupt::Interrupt::RxFifo0NewMsg);
-
-    let mut buffer = [0u8; 8];
-
-    while let Ok(msg) = rx.receive(&mut buffer) {
-        // ReceiveOverrun::unwrap() cannot fail
-        let msg = msg.unwrap();
-
-        let id = match msg.id {
-            fdcan::id::Id::Standard(standard_id) => {
-                zencan_node::common::messages::CanId::std(standard_id.as_raw())
-            }
-            fdcan::id::Id::Extended(extended_id) => {
-                zencan_node::common::messages::CanId::extended(extended_id.as_raw())
-            }
-        };
-        let msg = zencan_node::common::messages::CanMessage::new(id, &buffer[..msg.len as usize]);
-        // Ignore error -- an Err is returned for messages that are not consumed by the node
-        zencan::NODE_MBOX.store_message(msg).ok();
     }
 }
 

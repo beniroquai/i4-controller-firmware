@@ -23,7 +23,7 @@ portable-atomic = { version = "1.11.1" }
 rtt-target = { version = "0.6.1", features = ["defmt"] }
 static_cell = "2.1"
 stm32-metapac = { version = "15.0.0", features = ["stm32g474re", "rt"] }
-zencan-node = { path = "../zencan/zencan/zencan-node", default-features = false, features = ["defmt"]}
+zencan-node = { version = "0.0.3", default-features = false, features = ["defmt"]}
 
 [profile.dev]
 codegen-units = 1
@@ -44,5 +44,4 @@ opt-level = 3            # <-
 overflow-checks = false  # <-
 
 [build-dependencies]
-#zencan-build = { git = "https://github.com/mcbridejc/zencan" }
-zencan-build = { path = "../zencan/zencan/zencan-build" }
+zencan-build = { version = "0.0.3" }
