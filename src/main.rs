@@ -2,7 +2,6 @@
 #![no_main]
 use core::{
     convert::Infallible,
-    num::{NonZeroU8, NonZeroU16},
     pin::pin,
     sync::atomic::Ordering,
     time::Duration,
@@ -25,10 +24,6 @@ use zencan_node::{
 use crate::{gpio::DynamicPin, step_timer::StepTimer};
 
 use cortex_m_rt as _;
-use fdcan::{
-    FdCan, Fifo0, NormalOperationMode,
-    config::{DataBitTiming, FdCanConfig, GlobalFilter},
-};
 use panic_probe as _;
 use rtt_target::{rtt_init, set_defmt_channel};
 
