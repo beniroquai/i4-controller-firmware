@@ -7,7 +7,9 @@ chip = "STM32G474RETx"
 
 [default.rtt]
 enabled = true
+up_mode = "BlockIfFull"
 
-channels = [
-    { up = 0, name = "defmt_rtt", format = "Defmt" }
-]
+[[default.rtt.up_channels]]
+channel = 0
+name = "defmt_rtt"
+format = "Defmt"

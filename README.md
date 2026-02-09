@@ -338,6 +338,21 @@ This is a hardware-specific embedded project. For contributions:
 3. Document any hardware dependencies
 4. Keep unsafe code to a minimum
 
+
+## Flashing 
+
+```
+probe-rs list
+probe-rs run --chip STM32G474RETx target/thumbv7em-none-eabihf/release/i4-controller
+
+# Alternatively, if you have an Embed.toml configuration:
+cargo install cargo-binutils
+rustup component add llvm-tools
+cargo objcopy --release -- -O binary i4-controller.bin
+# Then flashing works with:
+cargo embed --release
+```
+
 ## Author
 
 Based on the repository: mcbridejc/i4-controller-firmware
