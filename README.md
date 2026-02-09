@@ -351,7 +351,20 @@ rustup component add llvm-tools
 cargo objcopy --release -- -O binary i4-controller.bin
 # Then flashing works with:
 cargo embed --release
+
+/Users/bene/.platformio/penv/bin/platformio device monitor --port /dev/cu.usbmodem987ACBFC1 --baud 115200
 ```
+
+## Serial Protocol
+
+```
+V 500 -500  → setzt X=500, Y=-500 steps/s → OK\n
+STOP\n        → V 0 0                        → OK\n
+PING\n        →                                OK\n
+HELP\n        →                                Hilfetext
+ungültig\n    →                                ERR ...\n
+```
+
 
 ## Author
 

@@ -34,6 +34,7 @@ mod gpio;
 mod pwm;
 mod step_timer;
 mod stepper;
+mod usb_serial;
 
 mod zencan {
     zencan_node::include_modules!(ZENCAN_CONFIG);
@@ -239,6 +240,11 @@ fn main() -> ! {
     // Have to enable DMA1 clock to keep RAM accessible for RTT during debug
     pac::RCC.ahb1enr().modify(|w| w.set_dma1en(true));
 
+    // Initialize USB CDC ACM serial interface
+    usb_serial::init_usb_clock();
+    let usb_bus = usb_serial::init_usb_bus();
+    let usb_serial_str = usb_serial::init_serial_string(get_serial());
+
     let mut cp = cortex_m::Peripherals::take().unwrap();
     // Configure the systick timer for 1kHz ticks at 16MHz.
     lilos::time::initialize_sys_tick(&mut cp.SYST, CLK_FREQ);
@@ -286,6 +292,11 @@ fn main() -> ! {
                 y_stepper,
                 &control_notify,
                 &operational_flag
+            )),
+            pin!(usb_serial::usb_task(
+                usb_bus,
+                &control_notify,
+                usb_serial_str
             )),
         ],
         lilos::exec::ALL_TASKS,

@@ -23,6 +23,9 @@ portable-atomic = { version = "1.11.1" }
 rtt-target = { version = "0.6.1", features = ["defmt"] }
 static_cell = "2.1"
 stm32-metapac = { version = "15.0.0", features = ["stm32g474re", "rt"] }
+stm32-usbd = "0.7"
+usb-device = "0.3"
+usbd-serial = "0.2"
 zencan-node = { version = "0.0.3", default-features = false, features = ["defmt"]}
 
 [profile.dev]
