@@ -343,7 +343,10 @@ This is a hardware-specific embedded project. For contributions:
 
 ```
 probe-rs list
-probe-rs run --chip STM32G474RETx target/thumbv7em-none-eabihf/release/i4-controller
+# build firmware:
+cargo build --release
+# flashes the firmware and starts execution immediately:
+probe-rs run --chip STM32G474RETx target/thumbv7em-none-eabihf/release/i4-controller 
 
 # Alternatively, if you have an Embed.toml configuration:
 cargo install cargo-binutils
@@ -359,11 +362,19 @@ cargo embed --release
 
 ```
 V 500 -500  → setzt X=500, Y=-500 steps/s → OK\n
+→ bewegt X=+1000, Y=-500 steps @ 800 steps/s → OK\n
+MOVE 100 50 100  
+MOVE -100 -50 100
+MOVE 200 0          → bewegt X=+200, Y=0 steps @ default speed → OK\n
+→ nx=5, ny=3, stepsx=200, stepsy=150, speed=600, pause=250ms → OK\n
+SNAKE 20 20 3 3 200 50  
 STOP\n        → V 0 0                        → OK\n
 PING\n        →                                OK\n
 HELP\n        →                                Hilfetext
 ungültig\n    →                                ERR ...\n
 ```
+
+Hinweis: `MOVE` verwendet standardmäßig 500 steps/s, wenn keine Geschwindigkeit angegeben ist.
 
 
 ## Author

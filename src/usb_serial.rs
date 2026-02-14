@@ -7,10 +7,12 @@
 //!
 //! | Command        | Description                             |
 //! |----------------|-----------------------------------------|
-//! | `V <x> <y>\n` | Set XY velocity (i16, steps/s)          |
-//! | `STOP\n`       | Stop motors (equivalent to `V 0 0`)     |
-//! | `PING\n`       | Returns `OK\n`                          |
-//! | `HELP\n` / `?` | Show available commands                 |
+//! | `V <x> <y>\n`                | Set XY velocity (i16, steps/s)     |
+//! | `MOVE <x> <y> [speed]\n`      | Move relative steps at speed       |
+//! | `SNAKE <nx> <ny> <sx> <sy> <speed> <pause_ms>\n` | Snake scan |
+//! | `STOP\n`                      | Stop motors (equivalent to `V 0 0`)|
+//! | `PING\n`                      | Returns `OK\n`                     |
+//! | `HELP\n` / `?`                | Show available commands            |
 
 use core::convert::Infallible;
 
@@ -23,6 +25,7 @@ use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 use crate::pac;
+use crate::{motion, motion::MotionCommand};
 
 // ---------------------------------------------------------------------------
 // STM32G474 USB FS peripheral descriptor
@@ -81,6 +84,7 @@ static USB_SERIAL_BUF: StaticCell<[u8; 8]> = StaticCell::new();
 // ---------------------------------------------------------------------------
 
 const MAX_STEP_FREQ: i16 = 2000;
+const DEFAULT_MOVE_SPEED: i16 = 500;
 
 // ---------------------------------------------------------------------------
 // Public initialisation helpers (called from main before the task list)
@@ -150,86 +154,166 @@ fn handle_command(
         return;
     }
 
-    // ---- PING ----
-    if line_str.eq_ignore_ascii_case("PING") {
-        write_response(serial, b"OK\n");
-        return;
-    }
+    let mut parts = line_str.split_ascii_whitespace();
+    let cmd = match parts.next() {
+        Some(c) => c,
+        None => return,
+    };
 
-    // ---- STOP ----
-    if line_str.eq_ignore_ascii_case("STOP") {
+    if cmd.eq_ignore_ascii_case("PING") {
+        write_response(serial, b"OK\n");
+    } else if cmd.eq_ignore_ascii_case("STOP") {
         crate::zencan::OBJECT3101.set(0, 0i16).ok();
         crate::zencan::OBJECT3101.set(1, 0i16).ok();
+        motion::set_command(MotionCommand::Cancel);
         control_notify.notify();
         write_response(serial, b"OK\n");
-        return;
-    }
-
-    // ---- HELP / ? ----
-    if line_str.eq_ignore_ascii_case("HELP") || line_str == "?" {
+    } else if cmd.eq_ignore_ascii_case("HELP") || cmd.eq_ignore_ascii_case("?") {
         write_response(serial, b"Commands:\n");
-        write_response(serial, b"  V <x> <y>  - set XY velocity (steps/s, i16)\n");
-        write_response(serial, b"  STOP       - stop motors (V 0 0)\n");
-        write_response(serial, b"  PING       - returns OK\n");
-        write_response(serial, b"  HELP / ?   - show this help\n");
-        return;
-    }
+        write_response(serial, b"  V <x> <y>                       - set XY velocity (steps/s, i16)\n");
+        write_response(serial, b"  MOVE <x> <y> [speed]            - move relative steps (default 500)\n");
+        write_response(serial, b"  SNAKE <nx> <ny> <sx> <sy> <speed> <pause_ms> - snake scan\n");
+        write_response(serial, b"  STOP                            - stop motors (V 0 0)\n");
+        write_response(serial, b"  PING                            - returns OK\n");
+        write_response(serial, b"  HELP / ?                        - show this help\n");
+    } else if cmd.eq_ignore_ascii_case("V") {
+            let x_str = match parts.next() {
+                Some(s) => s,
+                None => {
+                    write_response(serial, b"ERR missing x\n");
+                    return;
+                }
+            };
+            let y_str = match parts.next() {
+                Some(s) => s,
+                None => {
+                    write_response(serial, b"ERR missing y\n");
+                    return;
+                }
+            };
 
-    // ---- V <x> <y> ----
-    if line_str.len() >= 2
-        && (line_str.as_bytes()[0] == b'V' || line_str.as_bytes()[0] == b'v')
-        && line_str.as_bytes()[1] == b' '
-    {
-        let args = &line_str[2..];
-        let mut parts = args.split_ascii_whitespace();
+            let x: i16 = match x_str.parse() {
+                Ok(v) => v,
+                Err(_) => {
+                    write_response(serial, b"ERR bad x\n");
+                    return;
+                }
+            };
+            let y: i16 = match y_str.parse() {
+                Ok(v) => v,
+                Err(_) => {
+                    write_response(serial, b"ERR bad y\n");
+                    return;
+                }
+            };
 
-        let x_str = match parts.next() {
-            Some(s) => s,
+            // Clamp to firmware limits (same as CAN path)
+            let x = x.clamp(-MAX_STEP_FREQ, MAX_STEP_FREQ);
+            let y = y.clamp(-MAX_STEP_FREQ, MAX_STEP_FREQ);
+
+            crate::zencan::OBJECT3101.set(0, x).ok();
+            crate::zencan::OBJECT3101.set(1, y).ok();
+            motion::set_command(MotionCommand::Cancel);
+            control_notify.notify();
+
+            write_response(serial, b"OK\n");
+    } else if cmd.eq_ignore_ascii_case("MOVE") || cmd.eq_ignore_ascii_case("M") {
+        let x_steps: i32 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(v) => v,
             None => {
-                write_response(serial, b"ERR missing x\n");
-                return;
-            }
-        };
-        let y_str = match parts.next() {
-            Some(s) => s,
-            None => {
-                write_response(serial, b"ERR missing y\n");
-                return;
-            }
-        };
-
-        let x: i16 = match x_str.parse() {
-            Ok(v) => v,
-            Err(_) => {
                 write_response(serial, b"ERR bad x\n");
                 return;
             }
         };
-        let y: i16 = match y_str.parse() {
-            Ok(v) => v,
-            Err(_) => {
+        let y_steps: i32 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(v) => v,
+            None => {
                 write_response(serial, b"ERR bad y\n");
                 return;
             }
         };
+        let speed: i32 = match parts.next() {
+            Some(s) => match s.parse() {
+                Ok(v) => v,
+                Err(_) => {
+                    write_response(serial, b"ERR bad speed\n");
+                    return;
+                }
+            },
+            None => DEFAULT_MOVE_SPEED as i32,
+        };
 
-        // Clamp to firmware limits (same as CAN path)
-        let x = x.clamp(-MAX_STEP_FREQ, MAX_STEP_FREQ);
-        let y = y.clamp(-MAX_STEP_FREQ, MAX_STEP_FREQ);
+        if speed <= 0 {
+            write_response(serial, b"ERR bad speed\n");
+            return;
+        }
 
-        // Write velocity commands into the zencan OD entries – identical to
-        // what the CAN RPDO path does.
-        crate::zencan::OBJECT3101.set(0, x).ok();
-        crate::zencan::OBJECT3101.set(1, y).ok();
-
-        // Wake the control task so it applies the new velocity immediately.
+        let speed = (speed as i16).clamp(1, MAX_STEP_FREQ) as u16;
+        motion::set_command(MotionCommand::MoveSteps {
+            x_steps,
+            y_steps,
+            speed,
+        });
         control_notify.notify();
-
         write_response(serial, b"OK\n");
-        return;
-    }
+    } else if cmd.eq_ignore_ascii_case("SNAKE") || cmd.eq_ignore_ascii_case("SCAN") {
+        let nx: u16 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(v) if v > 0 => v,
+            _ => {
+                write_response(serial, b"ERR bad nx\n");
+                return;
+            }
+        };
+        let ny: u16 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(v) if v > 0 => v,
+            _ => {
+                write_response(serial, b"ERR bad ny\n");
+                return;
+            }
+        };
+        let stepsx: i32 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(v) if v > 0 => v,
+            _ => {
+                write_response(serial, b"ERR bad stepsx\n");
+                return;
+            }
+        };
+        let stepsy: i32 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(v) if v > 0 => v,
+            _ => {
+                write_response(serial, b"ERR bad stepsy\n");
+                return;
+            }
+        };
+        let speed: i32 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(v) if v > 0 => v,
+            _ => {
+                write_response(serial, b"ERR bad speed\n");
+                return;
+            }
+        };
+        let pause_ms: u32 = match parts.next().and_then(|s| s.parse().ok()) {
+            Some(v) => v,
+            None => {
+                write_response(serial, b"ERR bad pause\n");
+                return;
+            }
+        };
 
-    write_response(serial, b"ERR unknown cmd\n");
+        let speed = (speed as i16).clamp(1, MAX_STEP_FREQ) as u16;
+        motion::set_command(MotionCommand::SnakeScan {
+            nx,
+            ny,
+            stepsx,
+            stepsy,
+            speed,
+            pause_ms,
+        });
+        control_notify.notify();
+        write_response(serial, b"OK\n");
+    } else {
+        write_response(serial, b"ERR unknown cmd\n");
+    }
 }
 
 /// Async task: USB CDC ACM serial interface.

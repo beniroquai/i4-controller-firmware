@@ -16,6 +16,7 @@ use core::cell::Cell;
 
 use critical_section::Mutex;
 use crossbeam::atomic::AtomicCell;
+use portable_atomic::{AtomicI32, Ordering};
 
 use crate::current_control::IChannel;
 
@@ -99,6 +100,7 @@ pub struct Stepper<'a> {
     mode: AtomicCell<Mode>,
     stepper_pos: Mutex<Cell<u16>>,
     power: AtomicCell<u16>,
+    step_count: AtomicI32,
 }
 
 impl<'a> Stepper<'a> {
@@ -112,6 +114,7 @@ impl<'a> Stepper<'a> {
             mode: AtomicCell::new(Mode::Off),
             stepper_pos: Mutex::new(Cell::new(0)),
             power: AtomicCell::new(0),
+            step_count: AtomicI32::new(0),
         }
     }
 
@@ -156,6 +159,12 @@ impl<'a> Stepper<'a> {
             Mode::Reverse => true,
         };
 
+        if reverse {
+            self.step_count.fetch_sub(1, Ordering::Relaxed);
+        } else {
+            self.step_count.fetch_add(1, Ordering::Relaxed);
+        }
+
         let mut new_pos = 0;
         critical_section::with(|cs| {
             let stepper_pos = self.stepper_pos.borrow(cs).get();
@@ -176,5 +185,9 @@ impl<'a> Stepper<'a> {
             phase_a.set_duty_cycle((a * power / 32768) as i16);
             phase_b.set_duty_cycle((b * power / 32768) as i16);
         });
+    }
+
+    pub fn step_count(&self) -> i32 {
+        self.step_count.load(Ordering::Relaxed)
     }
 }

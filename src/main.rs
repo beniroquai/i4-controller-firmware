@@ -31,6 +31,7 @@ mod adc;
 mod can;
 mod current_control;
 mod gpio;
+mod motion;
 mod pwm;
 mod step_timer;
 mod stepper;
@@ -412,6 +413,207 @@ fn run_stepper_mode(
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct MoveState {
+    x_target: i32,
+    y_target: i32,
+    x_dir: i32,
+    y_dir: i32,
+    speed: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SnakePhase {
+    Pause { remaining_ms: u32 },
+    Move(MoveState),
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SnakeState {
+    nx: u16,
+    ny: u16,
+    stepsx: i32,
+    stepsy: i32,
+    speed: i32,
+    pause_ms: u32,
+    row: u16,
+    col: u16,
+    dir: i32,
+    phase: SnakePhase,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum MotionState {
+    Idle,
+    Move(MoveState),
+    Snake(SnakeState),
+}
+
+fn set_axis_velocity(index: usize, vel: i32) {
+    let vel = vel.clamp(-MAX_STEP_FREQ, MAX_STEP_FREQ) as i16;
+    zencan::OBJECT3101.set(index, vel).ok();
+}
+
+fn build_move_state(
+    x_stepper: &Stepper<'static>,
+    y_stepper: &Stepper<'static>,
+    x_steps: i32,
+    y_steps: i32,
+    speed: i32,
+) -> MoveState {
+    let speed = speed.clamp(MIN_STEP_FREQ, MAX_STEP_FREQ);
+    let x_dir = x_steps.signum();
+    let y_dir = y_steps.signum();
+    let x_target = x_stepper.step_count().saturating_add(x_steps);
+    let y_target = y_stepper.step_count().saturating_add(y_steps);
+
+    MoveState {
+        x_target,
+        y_target,
+        x_dir,
+        y_dir,
+        speed,
+    }
+}
+
+fn update_move_state(
+    state: &MoveState,
+    x_stepper: &Stepper<'static>,
+    y_stepper: &Stepper<'static>,
+) -> bool {
+    let x_now = x_stepper.step_count();
+    let y_now = y_stepper.step_count();
+
+    let x_done = if state.x_dir == 0 {
+        true
+    } else if state.x_dir > 0 {
+        x_now >= state.x_target
+    } else {
+        x_now <= state.x_target
+    };
+
+    let y_done = if state.y_dir == 0 {
+        true
+    } else if state.y_dir > 0 {
+        y_now >= state.y_target
+    } else {
+        y_now <= state.y_target
+    };
+
+    let x_vel = if x_done { 0 } else { state.x_dir * state.speed };
+    let y_vel = if y_done { 0 } else { state.y_dir * state.speed };
+
+    set_axis_velocity(0, x_vel);
+    set_axis_velocity(1, y_vel);
+
+    x_done && y_done
+}
+
+fn is_snake_complete(state: &SnakeState) -> bool {
+    if state.nx == 0 || state.ny == 0 {
+        return true;
+    }
+    if state.row != state.ny - 1 {
+        return false;
+    }
+    if state.dir > 0 {
+        state.col == state.nx - 1
+    } else {
+        state.col == 0
+    }
+}
+
+fn snake_build_next_move(
+    state: &mut SnakeState,
+    x_stepper: &Stepper<'static>,
+    y_stepper: &Stepper<'static>,
+) -> Option<MoveState> {
+    if state.dir > 0 {
+        if state.col + 1 < state.nx {
+            state.col += 1;
+            Some(build_move_state(
+                x_stepper,
+                y_stepper,
+                state.stepsx,
+                0,
+                state.speed,
+            ))
+        } else if state.row + 1 < state.ny {
+            state.row += 1;
+            state.dir = -1;
+            Some(build_move_state(
+                x_stepper,
+                y_stepper,
+                0,
+                state.stepsy,
+                state.speed,
+            ))
+        } else {
+            None
+        }
+    } else if state.col > 0 {
+        state.col -= 1;
+        Some(build_move_state(
+            x_stepper,
+            y_stepper,
+            -state.stepsx,
+            0,
+            state.speed,
+        ))
+    } else if state.row + 1 < state.ny {
+        state.row += 1;
+        state.dir = 1;
+        Some(build_move_state(
+            x_stepper,
+            y_stepper,
+            0,
+            state.stepsy,
+            state.speed,
+        ))
+    } else {
+        None
+    }
+}
+
+fn update_snake_state(
+    state: &mut SnakeState,
+    x_stepper: &Stepper<'static>,
+    y_stepper: &Stepper<'static>,
+    delta_t_ms: u32,
+) -> bool {
+    match &mut state.phase {
+        SnakePhase::Move(move_state) => {
+            if update_move_state(move_state, x_stepper, y_stepper) {
+                state.phase = SnakePhase::Pause {
+                    remaining_ms: state.pause_ms,
+                };
+            }
+            false
+        }
+        SnakePhase::Pause { remaining_ms } => {
+            set_axis_velocity(0, 0);
+            set_axis_velocity(1, 0);
+
+            if *remaining_ms > delta_t_ms {
+                *remaining_ms -= delta_t_ms;
+                return false;
+            }
+            *remaining_ms = 0;
+
+            if is_snake_complete(state) {
+                return true;
+            }
+
+            if let Some(next_move) = snake_build_next_move(state, x_stepper, y_stepper) {
+                state.phase = SnakePhase::Move(next_move);
+                false
+            } else {
+                true
+            }
+        }
+    }
+}
+
 async fn control_task(
     mut x_step_timer: StepTimer,
     mut y_step_timer: StepTimer,
@@ -423,6 +625,9 @@ async fn control_task(
     const CONTROL_INTERVAL: Duration = Duration::from_millis(5);
 
     let sleep = || lilos::time::with_timeout(CONTROL_INTERVAL, control_notify.until_next());
+
+    let mut motion_state = MotionState::Idle;
+    let mut previous_time = lilos::time::TickTime::now();
 
     loop {
         // Do nothing until we enter operational mode
@@ -437,7 +642,6 @@ async fn control_task(
         defmt::info!("Starting with mode = {}", mode);
         let mut x_vel = 0;
         let mut y_vel = 0;
-        let mut previous_time = lilos::time::TickTime::now();
         loop {
             if mode == 0 {
                 run_duty_cycle_mode(x_stepper, y_stepper);
@@ -445,6 +649,69 @@ async fn control_task(
                 let now = lilos::time::TickTime::now();
                 let delta_t_ms = now.millis_since(previous_time).0 as u32;
                 previous_time = now;
+
+                if let Some(cmd) = motion::take_command() {
+                    match cmd {
+                        motion::MotionCommand::Cancel => {
+                            motion_state = MotionState::Idle;
+                        }
+                        motion::MotionCommand::MoveSteps {
+                            x_steps,
+                            y_steps,
+                            speed,
+                        } => {
+                            let move_state = build_move_state(
+                                x_stepper,
+                                y_stepper,
+                                x_steps,
+                                y_steps,
+                                speed as i32,
+                            );
+                            motion_state = MotionState::Move(move_state);
+                        }
+                        motion::MotionCommand::SnakeScan {
+                            nx,
+                            ny,
+                            stepsx,
+                            stepsy,
+                            speed,
+                            pause_ms,
+                        } => {
+                            let speed = (speed as i32).clamp(MIN_STEP_FREQ, MAX_STEP_FREQ);
+                            let snake_state = SnakeState {
+                                nx,
+                                ny,
+                                stepsx,
+                                stepsy,
+                                speed,
+                                pause_ms,
+                                row: 0,
+                                col: 0,
+                                dir: 1,
+                                phase: SnakePhase::Pause {
+                                    remaining_ms: pause_ms,
+                                },
+                            };
+                            motion_state = MotionState::Snake(snake_state);
+                        }
+                    }
+                }
+
+                match &mut motion_state {
+                    MotionState::Idle => {}
+                    MotionState::Move(move_state) => {
+                        if update_move_state(move_state, x_stepper, y_stepper) {
+                            motion_state = MotionState::Idle;
+                        }
+                    }
+                    MotionState::Snake(snake_state) => {
+                        if update_snake_state(snake_state, x_stepper, y_stepper, delta_t_ms) {
+                            motion_state = MotionState::Idle;
+                            set_axis_velocity(0, 0);
+                            set_axis_velocity(1, 0);
+                        }
+                    }
+                }
                 run_stepper_mode(
                     &mut x_vel,
                     &mut y_vel,
@@ -459,6 +726,9 @@ async fn control_task(
             if !operational_flag.load(Ordering::Relaxed) {
                 x_stepper.disable();
                 y_stepper.disable();
+                motion_state = MotionState::Idle;
+                set_axis_velocity(0, 0);
+                set_axis_velocity(1, 0);
                 break;
             }
         }
