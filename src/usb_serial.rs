@@ -5,14 +5,34 @@
 //!
 //! # Protocol
 //!
-//! | Command        | Description                             |
-//! |----------------|-----------------------------------------|
-//! | `V <x> <y>\n`                | Set XY velocity (i16, steps/s)     |
-//! | `MOVE <x> <y> [speed]\n`      | Move relative steps at speed       |
-//! | `SNAKE <nx> <ny> <sx> <sy> <speed> <pause_ms>\n` | Snake scan |
-//! | `STOP\n`                      | Stop motors (equivalent to `V 0 0`)|
-//! | `PING\n`                      | Returns `OK\n`                     |
-//! | `HELP\n` / `?`                | Show available commands            |
+//! | Command                                          | Description                                |
+//! |--------------------------------------------------|--------------------------------------------|
+//! | `V <x> <y>\n`                                    | Set XY velocity (i16, steps/s)             |
+//! | `MOVE <x> <y> [speed]\n`                         | Move relative steps at speed               |
+//! | `SNAKE <nx> <ny> <sx> <sy> <speed> <pause_ms>\n` | Snake scan pattern                         |
+//! | `STOP\n`                                         | Stop motors (equivalent to `V 0 0`)        |
+//! | `HOLD [pct]\n`                                   | Get/set holding torque (0-100%)            |
+//! | `PING\n`                                         | Returns `OK\n`                             |
+//! | `HELP\n` / `?`                                   | Show available commands                    |
+//!
+//! # Holding Torque
+//!
+//! When holding torque is enabled (HOLD > 0), the motor maintains current through
+//! the coils when stationary to prevent position drift under load. This is similar
+//! to how commercial stepper drivers work. Typical values:
+//! - 0: Disabled (motor de-energizes when stopped, no holding)
+//! - 25-50: Light holding (reduced heat, may slip under load)
+//! - 50-75: Strong holding (more heat, better position retention)  
+//! - 100: Full holding (maximum heat, maximum torque)
+//!
+//! # Examples
+//!
+//! ```text
+//! HOLD 50        # Set 50% holding torque
+//! HOLD           # Query current holding torque
+//! V 100 100      # Move both axes at 100 steps/s
+//! STOP           # Stop and apply holding torque if enabled
+//! ```
 
 use core::convert::Infallible;
 
@@ -85,6 +105,34 @@ static USB_SERIAL_BUF: StaticCell<[u8; 8]> = StaticCell::new();
 
 const MAX_STEP_FREQ: i16 = 2000;
 const DEFAULT_MOVE_SPEED: i16 = 500;
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+/// Format a u16 value as decimal ASCII into the provided buffer.
+/// Returns the number of bytes written.
+fn format_u16(mut val: u16, buf: &mut [u8]) -> usize {
+    if val == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    
+    let mut tmp = [0u8; 5]; // max 65535 = 5 digits
+    let mut pos = 0;
+    
+    while val > 0 {
+        tmp[pos] = b'0' + (val % 10) as u8;
+        val /= 10;
+        pos += 1;
+    }
+    
+    // Reverse into output buffer
+    for i in 0..pos {
+        buf[i] = tmp[pos - 1 - i];
+    }
+    pos
+}
 
 // ---------------------------------------------------------------------------
 // Public initialisation helpers (called from main before the task list)
@@ -174,8 +222,37 @@ fn handle_command(
         write_response(serial, b"  MOVE <x> <y> [speed]            - move relative steps (default 500)\n");
         write_response(serial, b"  SNAKE <nx> <ny> <sx> <sy> <speed> <pause_ms> - snake scan\n");
         write_response(serial, b"  STOP                            - stop motors (V 0 0)\n");
+        write_response(serial, b"  HOLD [pct]                      - get/set holding torque (0-100%)\n");
         write_response(serial, b"  PING                            - returns OK\n");
         write_response(serial, b"  HELP / ?                        - show this help\n");
+    } else if cmd.eq_ignore_ascii_case("HOLD") {
+        // HOLD [percent] - get or set holding torque percentage
+        match parts.next() {
+            Some(pct_str) => {
+                let pct: u16 = match pct_str.parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        write_response(serial, b"ERR bad percent\n");
+                        return;
+                    }
+                };
+                if pct > 100 {
+                    write_response(serial, b"ERR percent must be 0-100\n");
+                    return;
+                }
+                crate::zencan::OBJECT3003.set_value(pct);
+                control_notify.notify();
+                write_response(serial, b"OK\n");
+            }
+            None => {
+                // Query current value
+                let current = crate::zencan::OBJECT3003.get_value();
+                let mut buf = [0u8; 16];
+                let len = format_u16(current, &mut buf);
+                write_response(serial, &buf[..len]);
+                write_response(serial, b"\n");
+            }
+        }
     } else if cmd.eq_ignore_ascii_case("V") {
             let x_str = match parts.next() {
                 Some(s) => s,

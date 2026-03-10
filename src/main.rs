@@ -366,6 +366,8 @@ fn run_stepper_mode(
     let y_vel_cmd = zencan::OBJECT3101.get(1).unwrap() as i32;
     let accel = zencan::OBJECT3001.get_value();
     let power = zencan::OBJECT3002.get_value();
+    let hold_power = zencan::OBJECT3003.get_value();
+    
     if accel == 0 {
         *x_vel = x_vel_cmd;
         *y_vel = y_vel_cmd;
@@ -393,6 +395,8 @@ fn run_stepper_mode(
 
     x_stepper.set_power(power);
     y_stepper.set_power(power);
+    x_stepper.set_hold_power(hold_power);
+    y_stepper.set_hold_power(hold_power);
 
     if x_vel.abs() > MIN_STEP_FREQ || y_vel.abs() > MIN_STEP_FREQ {
         // Set the timer frequencies for the timer IRQs which will trigger steps

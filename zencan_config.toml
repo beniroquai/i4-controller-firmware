@@ -91,3 +91,30 @@ data_type = "int16"
 access_type = "rw"
 pdo_mapping = "rpdo"
 persist = false
+
+# Holding torque power as percentage of peak (0-100).
+# 0 = disabled (motor de-energizes when stopped)
+# 25-50 = light holding, 50-75 = strong holding
+# Higher values increase power consumption and heat
+[[objects]]
+index = 0x3003
+parameter_name = "Hold Power Percent"
+object_type = "var"
+data_type = "uint16"
+access_type = "rw"
+pdo_mapping = "none"
+persist = true
+default_value = 0
+
+# Microstepping mode: 16, 32, or 64 microsteps per electrical cycle
+# Higher values give smoother motion but require faster step rates
+# Changes take effect after power cycle or PreOp transition
+[[objects]]
+index = 0x3004
+parameter_name = "Microstep Mode"
+object_type = "var"
+data_type = "uint8"
+access_type = "rw"
+pdo_mapping = "none"
+persist = true
+default_value = 32

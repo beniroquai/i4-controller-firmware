@@ -33,20 +33,15 @@ This firmware controls two stepper motors (X and Y axes) using microstepping wit
    rustup target add thumbv7em-none-eabihf
    ```
 
-3. **flip-link** (linker wrapper for embedded):
+3. **probe-rs** (for flashing and debugging):
    ```bash
-   cargo install flip-link
+   cargo install probe-rs-tools --locked
    ```
 
-4. **probe-rs** (for flashing and debugging):
+4. **cargo-embed** (optional, for easier development):
    ```bash
-   curl --proto '=https' --tlsv1.2 -LsSf https://github.com/probe-rs/probe-rs/releases/latest/download/probe-rs-tools-installer.sh | sh
+   cargo install cargo-embed
    ```
-
-   This will install:
-   - `probe-rs` - CLI tool for flashing and debugging
-   - `cargo-flash` - Cargo subcommand for flashing
-   - `cargo-embed` - Cargo subcommand for development workflow
 
 ### Dependencies
 
@@ -105,6 +100,11 @@ If you have an `Embed.toml` configuration file:
 cargo embed --release
 ```
 
+## Serial Connection
+
+```
+/Users/bene/.platformio/penv/bin/pio device monitor --port /dev/cu.usbmodem987ACBFC1 
+```
 ## Debugging
 
 ### RTT Logging
@@ -149,10 +149,18 @@ src/
 
 #### 1. **Stepper Motor Control** ([stepper.rs](src/stepper.rs))
 
-- **BipolarMicrostepper**: Implements 16-step microstepping using sine/cosine lookup tables
-- Symmetric table optimization reduces flash usage
+- **BipolarMicrostepper**: Configurable microstepping with 16/32/64 steps per electrical cycle
+- **Holding Torque**: Maintains current through coils when stationary to prevent position drift
+- Symmetric sine table optimization reduces flash usage
 - Dynamic current scaling for power control
 - Step position tracking with atomic operations
+
+**Microstepping Modes:**
+- `16`: Coarse stepping, lowest CPU load
+- `32`: Default, good balance of smoothness and performance
+- `64`: Smoothest motion, highest CPU load
+
+**Holding Torque:** When enabled (0-100%), the motor maintains a reduced current when stopped to hold position under load. Higher values mean stronger holding but more heat generation.
 
 #### 2. **Current Control** ([current_control.rs](src/current_control.rs))
 
@@ -207,6 +215,8 @@ The firmware implements a CANopen-like protocol using the `zencan` library:
   - `0x3000`: Operating mode selection
   - `0x3001`: Acceleration limit
   - `0x3002`: Motor power/current scaling
+  - `0x3003`: Holding torque percentage (0-100%)
+  - `0x3004`: Microstepping mode (16/32/64)
   - `0x3100`: Direct duty cycle commands (mode 0)
   - `0x3101`: Velocity commands (mode 1)
 
@@ -227,8 +237,18 @@ Closed-loop velocity control with acceleration limiting:
 - `OBJECT3101[1]`: Y velocity command (steps/sec)
 - `OBJECT3001`: Acceleration limit (steps/sec²)
 - `OBJECT3002`: Power scaling (0-65535)
+- `OBJECT3003`: Holding torque percentage (0-100, 0=disabled)
+- `OBJECT3004`: Microstepping mode (16, 32, or 64)
 
-Velocity range: ±2000 steps/sec (limited by MIN_STEP_FREQ=8, MAX_STEP_FREQ=2000)
+Velocity range: ±2000 steps/sec (limited by MIN_STEP_FREQ=16, MAX_STEP_FREQ=2000)
+
+##### Holding Torque
+
+When the motor stops and holding torque is enabled (OBJECT3003 > 0), the controller maintains current through the motor coils proportional to the holding percentage. This prevents the rotor from drifting under external load. Typical recommendations:
+- **0%**: Motor de-energizes when stopped (no holding, lowest power)
+- **25-50%**: Light holding (some drift resistance, moderate heat)
+- **50-75%**: Strong holding (good position retention, more heat)
+- **100%**: Maximum holding (best retention, maximum heat)
 
 ## Clock Configuration
 
@@ -275,43 +295,20 @@ This firmware uses `unsafe` code in several places:
 
 All `unsafe` usage is carefully documented and follows Rust embedded best practices.
 
-### Troubleshooting
+## Troubleshooting
 
 ### Build Errors
 
 **Problem**: Missing `zencan` dependency
 ```
-error: failed to load source for dependency `zencan-node`
-```
-**Solution**: Clone zencan repository in parent directory
-```bash
-cd /Users/bene/Downloads  # or your workspace parent directory
-git clone https://github.com/mcbridejc/zencan.git
-cd i4-controller-firmware
+Solution: Clone zencan repository in parent directory
+cd .. && git clone https://github.com/mcbridejc/zencan.git
 ```
 
 **Problem**: Wrong Rust edition
 ```
 Solution: Ensure Rust toolchain is up to date
 rustup update
-```
-
-**Problem**: Missing `flip-link`
-```
-error: linker `flip-link` not found
-```
-**Solution**: Install flip-link
-```bash
-cargo install flip-link
-```
-
-**Problem**: `probe-rs-tools` installation fails due to Rust version mismatch
-```
-error: rustc 1.85.1 is not supported
-```
-**Solution**: Use the official installer script instead:
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/probe-rs/probe-rs/releases/latest/download/probe-rs-tools-installer.sh | sh
 ```
 
 ### Runtime Issues
@@ -342,9 +339,6 @@ This is a hardware-specific embedded project. For contributions:
 ## Flashing 
 
 ```
-probe-rs list
-# build firmware:
-cargo build --release
 # flashes the firmware and starts execution immediately:
 probe-rs run --chip STM32G474RETx target/thumbv7em-none-eabihf/release/i4-controller 
 
