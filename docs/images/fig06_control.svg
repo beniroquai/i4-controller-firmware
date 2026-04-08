@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 540" font-family="Arial, sans-serif" font-size="13">
+  <style>
+    .ttl { font-size: 16px; font-weight: bold; }
+    .lbl { font-size: 12px; }
+    .num { font-size: 12px; font-weight: bold; }
+    .box { fill: #eef4ff; stroke: #000; stroke-width: 1.4; }
+    .box2 { fill: #fff3da; stroke: #000; stroke-width: 1.4; }
+    .box3 { fill: #e6f7e6; stroke: #000; stroke-width: 1.4; }
+    .ln { stroke: #000; stroke-width: 1.4; fill: none; }
+    .sig { stroke: #1a4fb0; stroke-width: 1.6; fill: none; }
+  </style>
+
+  <text x="500" y="24" text-anchor="middle" class="ttl">FIG. 6 — Closed-loop Control with Image-based Position Feedback</text>
+
+  <!-- Reference -->
+  <rect class="box" x="40" y="80" width="120" height="60"/>
+  <text x="100" y="108" text-anchor="middle" class="lbl">Trajectory</text>
+  <text x="100" y="126" text-anchor="middle" class="lbl">(x_ref, y_ref)</text>
+
+  <!-- Summing junction -->
+  <circle cx="200" cy="110" r="14" fill="#fff" stroke="#000" stroke-width="1.4"/>
+  <text x="200" y="115" text-anchor="middle" class="num">Σ</text>
+  <text x="186" y="100" class="lbl">+</text>
+  <text x="186" y="138" class="lbl">−</text>
+  <line class="sig" x1="160" y1="110" x2="186" y2="110" marker-end="url(#aC)"/>
+
+  <!-- Controller -->
+  <rect class="box" x="240" y="80" width="140" height="60"/>
+  <text x="310" y="108" text-anchor="middle" class="lbl">Controller</text>
+  <text x="310" y="126" text-anchor="middle" class="lbl">(PID + feedforward)</text>
+  <line class="sig" x1="214" y1="110" x2="240" y2="110" marker-end="url(#aC)"/>
+
+  <!-- Current drivers -->
+  <rect class="box" x="420" y="80" width="160" height="60"/>
+  <text x="500" y="108" text-anchor="middle" class="lbl">Quad H-bridge</text>
+  <text x="500" y="126" text-anchor="middle" class="lbl">constant-current driver</text>
+  <line class="sig" x1="380" y1="110" x2="420" y2="110" marker-end="url(#aC)"/>
+
+  <!-- Plant: PCB stator + sled -->
+  <rect class="box2" x="620" y="80" width="180" height="120"/>
+  <text x="710" y="108" text-anchor="middle" class="lbl">PCB stator (140) +</text>
+  <text x="710" y="126" text-anchor="middle" class="lbl">magnet sled (120/130)</text>
+  <text x="710" y="158" text-anchor="middle" class="lbl">(electromechanical plant)</text>
+  <text x="710" y="184" text-anchor="middle" class="lbl">→ actual sled position</text>
+  <line class="sig" x1="580" y1="110" x2="620" y2="110" marker-end="url(#aC)"/>
+
+  <!-- Microscope objective -->
+  <rect class="box3" x="620" y="240" width="180" height="60"/>
+  <text x="710" y="268" text-anchor="middle" class="lbl">Microscope objective (110)</text>
+  <text x="710" y="286" text-anchor="middle" class="lbl">+ camera</text>
+  <line class="sig" x1="710" y1="200" x2="710" y2="240" marker-end="url(#aC)"/>
+
+  <!-- Vision pipeline -->
+  <rect class="box3" x="420" y="320" width="200" height="80"/>
+  <text x="520" y="346" text-anchor="middle" class="lbl">Vision pipeline:</text>
+  <text x="520" y="364" text-anchor="middle" class="lbl">cross-correlation /</text>
+  <text x="520" y="382" text-anchor="middle" class="lbl">fiducial / feature tracking</text>
+  <line class="sig" x1="710" y1="300" x2="710" y2="360" marker-end="url(#aC)"/>
+  <line class="sig" x1="710" y1="360" x2="620" y2="360" marker-end="url(#aC)"/>
+
+  <!-- Estimator -->
+  <rect class="box3" x="200" y="320" width="180" height="80"/>
+  <text x="290" y="346" text-anchor="middle" class="lbl">Position estimator</text>
+  <text x="290" y="364" text-anchor="middle" class="lbl">+ velocity / disturbance</text>
+  <text x="290" y="382" text-anchor="middle" class="lbl">observer</text>
+  <line class="sig" x1="420" y1="360" x2="380" y2="360" marker-end="url(#aC)"/>
+
+  <!-- feedback to summing junction -->
+  <line class="sig" x1="200" y1="320" x2="200" y2="124" marker-end="url(#aC)"/>
+
+  <!-- Alt sensors -->
+  <rect class="box3" x="40" y="420" width="940" height="80"/>
+  <text x="60" y="442" class="ttl" font-size="13">Alternative / supplementary feedback sources:</text>
+  <text x="60" y="464" class="lbl">• Hall / magnetoresistive sensors on PCB    • capacitive sense to guard rails    • inductive sense to PCB structures</text>
+  <text x="60" y="482" class="lbl">• printed encoder scales + small reflective sensor on sled    • time-of-flight    • laser interferometry    • image-based dead-reckoning during illumination off-time</text>
+
+  <defs>
+    <marker id="aC" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1a4fb0"/>
+    </marker>
+  </defs>
+</svg>

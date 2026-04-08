@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 580" font-family="Arial, sans-serif" font-size="13">
+  <style>
+    .ttl { font-size: 16px; font-weight: bold; }
+    .ttl2 { font-size: 14px; font-weight: bold; }
+    .lbl { font-size: 12px; }
+    .num { font-size: 12px; font-weight: bold; }
+    .pcb { fill: #cfe6cf; stroke: #000; stroke-width: 1.4; }
+    .sled { fill: #f4d58d; stroke: #000; stroke-width: 1.4; }
+    .ptfe { fill: #d8f1ff; stroke: #000; stroke-width: 1.2; }
+    .oil { fill: #fff7c2; stroke: #000; stroke-width: 1; }
+    .ball { fill: #888; stroke: #000; stroke-width: 1; }
+    .air { fill: #eaf6ff; stroke: #6aa9d6; stroke-width: 1; }
+    .arrow { stroke: #1a4fb0; stroke-width: 1.4; fill: none; }
+    .frame { fill: none; stroke: #000; stroke-width: 1.4; }
+  </style>
+
+  <text x="500" y="24" text-anchor="middle" class="ttl">FIG. 5 — Friction-reduction Interfaces between Carriage and PCB Stator</text>
+
+  <!-- A: PTFE film -->
+  <g transform="translate(40,60)">
+    <text x="180" y="0" text-anchor="middle" class="ttl2">(A) Low-adhesion film</text>
+    <rect class="frame" x="0" y="14" width="360" height="120"/>
+    <rect class="sled" x="40" y="40" width="280" height="20"/>
+    <rect class="ptfe" x="0" y="62" width="360" height="6"/>
+    <rect class="pcb" x="0" y="70" width="360" height="40"/>
+    <text x="180" y="128" text-anchor="middle" class="lbl">PTFE / Kapton / PET (170)</text>
+  </g>
+
+  <!-- B: Lubricant -->
+  <g transform="translate(440,60)">
+    <text x="180" y="0" text-anchor="middle" class="ttl2">(B) Boundary lubricant / oil</text>
+    <rect class="frame" x="0" y="14" width="360" height="120"/>
+    <rect class="sled" x="40" y="40" width="280" height="20"/>
+    <rect class="oil" x="0" y="62" width="360" height="6"/>
+    <g fill="#caa800">
+      <circle cx="60" cy="65" r="2"/><circle cx="100" cy="65" r="2"/>
+      <circle cx="140" cy="65" r="2"/><circle cx="180" cy="65" r="2"/>
+      <circle cx="220" cy="65" r="2"/><circle cx="260" cy="65" r="2"/>
+      <circle cx="300" cy="65" r="2"/>
+    </g>
+    <rect class="pcb" x="0" y="70" width="360" height="40"/>
+    <text x="180" y="128" text-anchor="middle" class="lbl">PFPE / Krytox / ferrofluid (172)</text>
+  </g>
+
+  <!-- C: Rolling elements -->
+  <g transform="translate(40,210)">
+    <text x="180" y="0" text-anchor="middle" class="ttl2">(C) Rolling elements (balls / micro-spheres)</text>
+    <rect class="frame" x="0" y="14" width="360" height="120"/>
+    <rect class="sled" x="40" y="40" width="280" height="22"/>
+    <g>
+      <circle class="ball" cx="80" cy="72" r="9"/>
+      <circle class="ball" cx="140" cy="72" r="9"/>
+      <circle class="ball" cx="200" cy="72" r="9"/>
+      <circle class="ball" cx="260" cy="72" r="9"/>
+    </g>
+    <rect class="pcb" x="0" y="82" width="360" height="40"/>
+    <text x="180" y="138" text-anchor="middle" class="lbl">retained in shallow pockets in sled or PCB (174)</text>
+  </g>
+
+  <!-- D: Air bearing -->
+  <g transform="translate(440,210)">
+    <text x="180" y="0" text-anchor="middle" class="ttl2">(D) Air-film bearing — micro-aperture array</text>
+    <rect class="frame" x="0" y="14" width="360" height="120"/>
+    <rect class="sled" x="40" y="34" width="280" height="20"/>
+    <rect class="air" x="0" y="56" width="360" height="14"/>
+    <rect class="pcb" x="0" y="70" width="360" height="48"/>
+    <!-- micro-holes -->
+    <g fill="#fff" stroke="#1a4fb0">
+      <circle cx="50"  cy="94" r="3"/><circle cx="80"  cy="94" r="3"/>
+      <circle cx="110" cy="94" r="3"/><circle cx="140" cy="94" r="3"/>
+      <circle cx="170" cy="94" r="3"/><circle cx="200" cy="94" r="3"/>
+      <circle cx="230" cy="94" r="3"/><circle cx="260" cy="94" r="3"/>
+      <circle cx="290" cy="94" r="3"/><circle cx="320" cy="94" r="3"/>
+    </g>
+    <!-- airflow up arrows -->
+    <g>
+      <line class="arrow" x1="50"  y1="86" x2="50"  y2="60" marker-end="url(#aB)"/>
+      <line class="arrow" x1="110" y1="86" x2="110" y2="60" marker-end="url(#aB)"/>
+      <line class="arrow" x1="170" y1="86" x2="170" y2="60" marker-end="url(#aB)"/>
+      <line class="arrow" x1="230" y1="86" x2="230" y2="60" marker-end="url(#aB)"/>
+      <line class="arrow" x1="290" y1="86" x2="290" y2="60" marker-end="url(#aB)"/>
+    </g>
+    <text x="180" y="138" text-anchor="middle" class="lbl">pressurized gas through PCB vias forms air cushion (176)</text>
+  </g>
+
+  <!-- E: Vibration to break stiction -->
+  <g transform="translate(40,360)">
+    <text x="180" y="0" text-anchor="middle" class="ttl2">(E) Active vibration / dither to break stiction</text>
+    <rect class="frame" x="0" y="14" width="360" height="120"/>
+    <rect class="sled" x="40" y="50" width="280" height="22"/>
+    <path d="M40,80 q20,-10 40,0 t40,0 t40,0 t40,0 t40,0 t40,0 t40,0" fill="none" stroke="#a83a3a" stroke-width="2"/>
+    <rect class="pcb" x="0" y="86" width="360" height="36"/>
+    <text x="180" y="138" text-anchor="middle" class="lbl">small high-frequency current modulation (178)</text>
+  </g>
+
+  <!-- F: Compliant sphere "flat-tire" -->
+  <g transform="translate(440,360)">
+    <text x="180" y="0" text-anchor="middle" class="ttl2">(F) Compliant deformable contact ("flat-tire")</text>
+    <rect class="frame" x="0" y="14" width="360" height="120"/>
+    <rect class="sled" x="40" y="40" width="280" height="22"/>
+    <ellipse cx="120" cy="78" rx="14" ry="10" fill="#bcd9bc" stroke="#000"/>
+    <ellipse cx="200" cy="78" rx="14" ry="10" fill="#bcd9bc" stroke="#000"/>
+    <ellipse cx="280" cy="78" rx="14" ry="10" fill="#bcd9bc" stroke="#000"/>
+    <rect class="pcb" x="0" y="88" width="360" height="36"/>
+    <text x="180" y="138" text-anchor="middle" class="lbl">soft elastomer or fluid-filled "balloon" feet (180)</text>
+  </g>
+
+  <defs>
+    <marker id="aB" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1a4fb0"/>
+    </marker>
+  </defs>
+</svg>
