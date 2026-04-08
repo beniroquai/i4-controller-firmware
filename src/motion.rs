@@ -17,6 +17,10 @@ pub enum MotionCommand {
         stepsy: i32,
         speed: u16,
         pause_ms: u32,
+        /// Holding torque during pause phases (0-100% of peak power).
+        /// Overrides the global OBJECT3003 setting for the duration of the scan.
+        /// 0 = use global HOLD setting.
+        hold_pct: u16,
     },
 }
 

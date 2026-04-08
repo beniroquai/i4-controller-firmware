@@ -202,10 +202,16 @@ fn main() -> ! {
     current3.set_duty_cycle(0);
     current4.set_duty_cycle(0);
 
+    // Read microstep mode from persistent config (default 32, valid: 16/32/64)
+    let microstep_val = zencan::OBJECT3004.get_value();
+    let microstep_mode = stepper::MicrostepMode::from_u8(microstep_val as u8)
+        .unwrap_or_default();
+    defmt::info!("Microstep mode: {}", microstep_val);
+
     // Safety: This is the only time we will mutate these statics
     let (x_stepper, y_stepper) = unsafe {
-        *X_STEPPER.get() = Stepper::new(current1, current2);
-        *Y_STEPPER.get() = Stepper::new(current3, current4);
+        *X_STEPPER.get() = Stepper::with_microstep_mode(current1, current2, microstep_mode);
+        *Y_STEPPER.get() = Stepper::with_microstep_mode(current3, current4, microstep_mode);
         (&*X_STEPPER.get(), &*Y_STEPPER.get())
     };
 
@@ -440,6 +446,8 @@ struct SnakeState {
     stepsy: i32,
     speed: i32,
     pause_ms: u32,
+    /// Per-scan holding torque override (0 = use global OBJECT3003)
+    hold_pct: u16,
     row: u16,
     col: u16,
     dir: i32,
@@ -680,6 +688,7 @@ async fn control_task(
                             stepsy,
                             speed,
                             pause_ms,
+                            hold_pct,
                         } => {
                             let speed = (speed as i32).clamp(MIN_STEP_FREQ, MAX_STEP_FREQ);
                             let snake_state = SnakeState {
@@ -689,6 +698,7 @@ async fn control_task(
                                 stepsy,
                                 speed,
                                 pause_ms,
+                                hold_pct,
                                 row: 0,
                                 col: 0,
                                 dir: 1,
@@ -725,6 +735,21 @@ async fn control_task(
                     x_stepper,
                     y_stepper,
                 );
+
+                // If a snake scan specifies its own hold_pct, override the global
+                // hold power during pause phases so the motor holds position firmly
+                // even if the global HOLD setting differs.
+                if let MotionState::Snake(ref s) = motion_state {
+                    if s.hold_pct > 0 {
+                        if let SnakePhase::Pause { .. } = s.phase {
+                            x_stepper.set_hold_power(s.hold_pct);
+                            y_stepper.set_hold_power(s.hold_pct);
+                            // Re-apply holding current with the scan-specific power level
+                            x_stepper.disable();
+                            y_stepper.disable();
+                        }
+                    }
+                }
             }
             sleep().await;
             if !operational_flag.load(Ordering::Relaxed) {

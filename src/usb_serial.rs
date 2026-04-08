@@ -220,11 +220,40 @@ fn handle_command(
         write_response(serial, b"Commands:\n");
         write_response(serial, b"  V <x> <y>                       - set XY velocity (steps/s, i16)\n");
         write_response(serial, b"  MOVE <x> <y> [speed]            - move relative steps (default 500)\n");
-        write_response(serial, b"  SNAKE <nx> <ny> <sx> <sy> <speed> <pause_ms> - snake scan\n");
+        write_response(serial, b"  SNAKE <nx> <ny> <sx> <sy> <spd> <ms> [hold%] - snake scan\n");
         write_response(serial, b"  STOP                            - stop motors (V 0 0)\n");
-        write_response(serial, b"  HOLD [pct]                      - get/set holding torque (0-100%)\n");
+        write_response(serial, b"  HOLD [pct]                      - get/set global holding torque (0-100%)\n");
+        write_response(serial, b"  MICROSTEP [val]                 - get/set microstep mode (16/32/64)\n");
         write_response(serial, b"  PING                            - returns OK\n");
         write_response(serial, b"  HELP / ?                        - show this help\n");
+    } else if cmd.eq_ignore_ascii_case("MICROSTEP") {
+        // MICROSTEP [16|32|64] - get or set microstepping resolution
+        // Changes are persisted but only take effect after the next reboot.
+        match parts.next() {
+            Some(val_str) => {
+                let val: u8 = match val_str.parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        write_response(serial, b"ERR bad value\n");
+                        return;
+                    }
+                };
+                if val != 16 && val != 32 && val != 64 {
+                    write_response(serial, b"ERR value must be 16, 32 or 64\n");
+                    return;
+                }
+                crate::zencan::OBJECT3004.set_value(val as u8);
+                write_response(serial, b"OK (takes effect after reboot)\n");
+            }
+            None => {
+                // Query current value
+                let current = crate::zencan::OBJECT3004.get_value();
+                let mut buf = [0u8; 4];
+                let len = format_u16(current as u16, &mut buf);
+                write_response(serial, &buf[..len]);
+                write_response(serial, b"\n");
+            }
+        }
     } else if cmd.eq_ignore_ascii_case("HOLD") {
         // HOLD [percent] - get or set holding torque percentage
         match parts.next() {
@@ -377,6 +406,18 @@ fn handle_command(
             }
         };
 
+        // Optional trailing parameter: holding torque percentage during pauses (0-100)
+        let hold_pct: u16 = match parts.next() {
+            Some(s) => match s.parse::<u16>() {
+                Ok(v) if v <= 100 => v,
+                _ => {
+                    write_response(serial, b"ERR bad hold_pct (0-100)\n");
+                    return;
+                }
+            },
+            None => 0,
+        };
+
         let speed = (speed as i16).clamp(1, MAX_STEP_FREQ) as u16;
         motion::set_command(MotionCommand::SnakeScan {
             nx,
@@ -385,6 +426,7 @@ fn handle_command(
             stepsy,
             speed,
             pause_ms,
+            hold_pct,
         });
         control_notify.notify();
         write_response(serial, b"OK\n");

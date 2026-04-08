@@ -103,7 +103,9 @@ cargo embed --release
 ## Serial Connection
 
 ```
-/Users/bene/.platformio/penv/bin/pio device monitor --port /dev/cu.usbmodem987ACBFC1 
+/Users/bene/.platformio/penv/bin/pio device monitor --port /dev/cu.usbmodem987ACBFC1  --baud 9600
+/Users/bene/.platformio/penv/bin/pio device monitor --port /dev/cu.usbmodem3FEE3A1E1  --baud 9600
+
 ```
 ## Debugging
 
@@ -357,15 +359,20 @@ cargo embed --release
 ```
 V 500 -500  → setzt X=500, Y=-500 steps/s → OK\n
 → bewegt X=+1000, Y=-500 steps @ 800 steps/s → OK\n
-MOVE 100 50 100  
-MOVE -100 -50 100
+MOVE 100 50 100   # relative motion in steps
+MOVE -100 -50 100 # relative motion in steps
 MOVE 200 0          → bewegt X=+200, Y=0 steps @ default speed → OK\n
 → nx=5, ny=3, stepsx=200, stepsy=150, speed=600, pause=250ms → OK\n
-SNAKE 20 20 3 3 200 50  
+SNAKE 10 10 3 3 200 50  # moves the stage in a snake 
 STOP\n        → V 0 0                        → OK\n
 PING\n        →                                OK\n
 HELP\n        →                                Hilfetext
 ungültig\n    →                                ERR ...\n
+MICROSTEP        # Aktuellen Wert abfragen → gibt z.B. "32" zurück
+MICROSTEP 64     # Auf 64 Mikroschritte setzen (wird gespeichert, gilt nach Neustart)
+MICROSTEP 16
+SNAKE 10 10 4 4 200 250 0   # 50% Halte-Drehmoment während 500 ms Pausen
+SNAKE 5 5 100 100 200 500      # kein Override, globale HOLD-Einstellung gilt
 ```
 
 Hinweis: `MOVE` verwendet standardmäßig 500 steps/s, wenn keine Geschwindigkeit angegeben ist.
