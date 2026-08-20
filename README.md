@@ -104,7 +104,7 @@ cargo embed --release
 
 ```
 /Users/bene/.platformio/penv/bin/pio device monitor --port /dev/cu.usbmodem987ACBFC1  --baud 9600
-/Users/bene/.platformio/penv/bin/pio device monitor --port /dev/cu.usbmodem3FEE3A1E1  --baud 9600
+/Users/bene/.platformio/penv/bin/pio device monitor --port /dev/cu.usbmodem6D964F271  --baud 9600
 
 ```
 ## Debugging
@@ -351,15 +351,16 @@ cargo objcopy --release -- -O binary i4-controller.bin
 # Then flashing works with:
 cargo embed --release
 
-/Users/bene/.platformio/penv/bin/platformio device monitor --port /dev/cu.usbmodem987ACBFC1 --baud 115200
+/Users/bene/.platformio/penv/bin/platformio device monitor --port  /dev/cu.usbmodem6D964F271  --baud 115200
 ```
 
 ## Serial Protocol
 
 ```
-V 500 -500  → setzt X=500, Y=-500 steps/s → OK\n
+V 200 -200  → setzt X=500, Y=-500 steps/s → OK\n
 → bewegt X=+1000, Y=-500 steps @ 800 steps/s → OK\n
 MOVE 100 50 100   # relative motion in steps
+MOVE -1000 -500 300
 MOVE -100 -50 100 # relative motion in steps
 MOVE 200 0          → bewegt X=+200, Y=0 steps @ default speed → OK\n
 → nx=5, ny=3, stepsx=200, stepsy=150, speed=600, pause=250ms → OK\n

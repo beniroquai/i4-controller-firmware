@@ -399,6 +399,7 @@ fn run_stepper_mode(
         *y_vel = y_vel.signum() * MAX_STEP_FREQ;
     }
 
+    // full power 
     x_stepper.set_power(power);
     y_stepper.set_power(power);
     x_stepper.set_hold_power(hold_power);
