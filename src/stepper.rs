@@ -24,7 +24,7 @@ use core::cell::Cell;
 
 use critical_section::Mutex;
 use crossbeam::atomic::AtomicCell;
-use portable_atomic::{AtomicI32, AtomicU16, Ordering};
+use portable_atomic::{AtomicBool, AtomicI32, AtomicU16, Ordering};
 
 use crate::current_control::IChannel;
 
@@ -175,6 +175,9 @@ pub struct Stepper<'a> {
     /// Holding power as percentage (0-100) of peak power. 0 = holding disabled.
     hold_power_pct: AtomicU16,
     step_count: AtomicI32,
+    /// When set, step() refuses to move past `target` (exact stop for MOVE).
+    has_target: AtomicBool,
+    target: AtomicI32,
 }
 
 impl<'a> Stepper<'a> {
@@ -198,6 +201,8 @@ impl<'a> Stepper<'a> {
             power: AtomicCell::new(0),
             hold_power_pct: AtomicU16::new(0),
             step_count: AtomicI32::new(0),
+            has_target: AtomicBool::new(false),
+            target: AtomicI32::new(0),
         }
     }
 
@@ -300,6 +305,14 @@ impl<'a> Stepper<'a> {
             Mode::Reverse => true,
         };
 
+        if self.has_target.load(Ordering::Relaxed) {
+            let now = self.step_count.load(Ordering::Relaxed);
+            let target = self.target.load(Ordering::Relaxed);
+            if (reverse && now <= target) || (!reverse && now >= target) {
+                return;
+            }
+        }
+
         if reverse {
             self.step_count.fetch_sub(1, Ordering::Relaxed);
         } else {
@@ -326,6 +339,21 @@ impl<'a> Stepper<'a> {
             phase_a.set_duty_cycle((a * power / 32768) as i16);
             phase_b.set_duty_cycle((b * power / 32768) as i16);
         });
+    }
+
+    /// Never step past `target` until clear_target() is called.
+    pub fn set_target(&self, target: i32) {
+        self.target.store(target, Ordering::Relaxed);
+        self.has_target.store(true, Ordering::Relaxed);
+    }
+
+    pub fn clear_target(&self) {
+        self.has_target.store(false, Ordering::Relaxed);
+    }
+
+    /// Microsteps per electrical cycle actually in use (not the stored setting).
+    pub fn microsteps(&self) -> usize {
+        self.stepper.nsteps()
     }
 
     pub fn step_count(&self) -> i32 {

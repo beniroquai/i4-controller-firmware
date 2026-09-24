@@ -57,6 +57,12 @@ fn get_serial() -> u32 {
 static X_STEPPER: GroundedCell<Stepper> = GroundedCell::uninit();
 static Y_STEPPER: GroundedCell<Stepper> = GroundedCell::uninit();
 
+/// Read-only access to both steppers for status queries (POS, MICROSTEP).
+/// Only valid after main() has initialised them, i.e. from any task.
+pub fn steppers() -> (&'static Stepper<'static>, &'static Stepper<'static>) {
+    unsafe { (&*X_STEPPER.get(), &*Y_STEPPER.get()) }
+}
+
 /// Notify for NodeMbox notify callback to access
 static CAN_NOTIFY: Notify = Notify::new();
 
@@ -400,8 +406,8 @@ fn run_stepper_mode(
     }
 
     // full power 
-    x_stepper.set_power(power);
-    y_stepper.set_power(power);
+    x_stepper.set_power(motion::axis_power(0, power));
+    y_stepper.set_power(motion::axis_power(1, power));
     x_stepper.set_hold_power(hold_power);
     y_stepper.set_hold_power(hold_power);
 
@@ -479,6 +485,10 @@ fn build_move_state(
     let y_dir = y_steps.signum();
     let x_target = x_stepper.step_count().saturating_add(x_steps);
     let y_target = y_stepper.step_count().saturating_add(y_steps);
+    // Hard stop in the step ISR: the accel limiter keeps stepping while it
+    // ramps down, which used to overshoot the target by tens of microsteps.
+    x_stepper.set_target(x_target);
+    y_stepper.set_target(y_target);
 
     MoveState {
         x_target,
@@ -513,8 +523,17 @@ fn update_move_state(
         y_now <= state.y_target
     };
 
-    let x_vel = if x_done { 0 } else { state.x_dir * state.speed };
-    let y_vel = if y_done { 0 } else { state.y_dir * state.speed };
+    // Decelerate into the target: v <= sqrt(2 * a * remaining).
+    let accel = zencan::OBJECT3001.get_value() as i64;
+    let speed_for = |remaining: i32| -> i32 {
+        if accel == 0 {
+            return state.speed;
+        }
+        let cap = (2 * accel * remaining.unsigned_abs() as i64).isqrt();
+        (state.speed as i64).min(cap).max(MIN_STEP_FREQ as i64 + 1) as i32
+    };
+    let x_vel = if x_done { 0 } else { state.x_dir * speed_for(state.x_target - x_now) };
+    let y_vel = if y_done { 0 } else { state.y_dir * speed_for(state.y_target - y_now) };
 
     set_axis_velocity(0, x_vel);
     set_axis_velocity(1, y_vel);
@@ -645,6 +664,7 @@ async fn control_task(
     loop {
         // Do nothing until we enter operational mode
         while !operational_flag.load(Ordering::Relaxed) {
+            motion::BUSY.store(false, Ordering::Relaxed);
             sleep().await;
         }
 
@@ -667,6 +687,8 @@ async fn control_task(
                     match cmd {
                         motion::MotionCommand::Cancel => {
                             motion_state = MotionState::Idle;
+                            x_stepper.clear_target();
+                            y_stepper.clear_target();
                         }
                         motion::MotionCommand::MoveSteps {
                             x_steps,
@@ -735,6 +757,12 @@ async fn control_task(
                     &mut y_step_timer,
                     x_stepper,
                     y_stepper,
+                );
+                motion::BUSY.store(
+                    !matches!(motion_state, MotionState::Idle)
+                        || x_vel.abs() > MIN_STEP_FREQ
+                        || y_vel.abs() > MIN_STEP_FREQ,
+                    Ordering::Relaxed,
                 );
 
                 // If a snake scan specifies its own hold_pct, override the global

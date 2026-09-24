@@ -378,6 +378,21 @@ SNAKE 5 5 100 100 200 500      # kein Override, globale HOLD-Einstellung gilt
 
 Hinweis: `MOVE` verwendet standardmäßig 500 steps/s, wenn keine Geschwindigkeit angegeben ist.
 
+### Status and tuning (for benchmarking)
+
+```
+POS              → "<x> <y>"  step counts in microsteps
+BUSY             → "1" while a MOVE/SNAKE runs or motors still step, else "0"
+POWER            → "<x> <y>"  effective per-axis peak duty
+POWER 8000 18000 → per-axis peak duty 0..32767, 0 = use global default (not persisted)
+MICROSTEP        → mode actually running (a stored change applies after reboot)
+```
+
+`MOVE` replies `OK` immediately and runs in the background. Poll `BUSY` before
+grabbing an image. A new `MOVE` replaces a running one. `MOVE` now stops exactly
+on target: the step ISR refuses to step past it, and velocity is capped at
+sqrt(2 · accel · remaining) so the sled decelerates into it.
+
 
 ## Author
 

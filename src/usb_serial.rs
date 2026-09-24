@@ -12,6 +12,10 @@
 //! | `SNAKE <nx> <ny> <sx> <sy> <speed> <pause_ms>\n` | Snake scan pattern                         |
 //! | `STOP\n`                                         | Stop motors (equivalent to `V 0 0`)        |
 //! | `HOLD [pct]\n`                                   | Get/set holding torque (0-100%)            |
+//! | `POS\n`                                          | Step counts `<x> <y>` (microsteps)         |
+//! | `BUSY\n`                                         | `1` while a move/scan runs or motors step  |
+//! | `POWER [x y]\n`                                  | Get/set per-axis peak duty (0-32767)       |
+//! | `MICROSTEP [n]\n`                                | Get active / set stored microstep mode     |
 //! | `PING\n`                                         | Returns `OK\n`                             |
 //! | `HELP\n` / `?`                                   | Show available commands                    |
 //!
@@ -43,6 +47,8 @@ use stm32_usbd::{UsbBus, UsbPeripheral};
 use usb_device::bus::UsbBusAllocator;
 use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
+
+use portable_atomic::Ordering;
 
 use crate::pac;
 use crate::{motion, motion::MotionCommand};
@@ -134,6 +140,41 @@ fn format_u16(mut val: u16, buf: &mut [u8]) -> usize {
     pos
 }
 
+/// Format a signed value as decimal ASCII. Returns the number of bytes written.
+fn format_i32(val: i32, buf: &mut [u8]) -> usize {
+    let mut tmp = [0u8; 10]; // u32::MAX has 10 digits
+    let mut n = val.unsigned_abs();
+    let mut pos = 0;
+    loop {
+        tmp[pos] = b'0' + (n % 10) as u8;
+        n /= 10;
+        pos += 1;
+        if n == 0 {
+            break;
+        }
+    }
+    let mut len = 0;
+    if val < 0 {
+        buf[0] = b'-';
+        len = 1;
+    }
+    for i in 0..pos {
+        buf[len + i] = tmp[pos - 1 - i];
+    }
+    len + pos
+}
+
+/// Write `<a> <b>\n`.
+fn write_pair(serial: &mut SerialPort<UsbBusType>, a: i32, b: i32) {
+    let mut buf = [0u8; 24];
+    let mut len = format_i32(a, &mut buf);
+    buf[len] = b' ';
+    len += 1;
+    len += format_i32(b, &mut buf[len..]);
+    buf[len] = b'\n';
+    write_response(serial, &buf[..len + 1]);
+}
+
 // ---------------------------------------------------------------------------
 // Public initialisation helpers (called from main before the task list)
 // ---------------------------------------------------------------------------
@@ -223,7 +264,10 @@ fn handle_command(
         write_response(serial, b"  SNAKE <nx> <ny> <sx> <sy> <spd> <ms> [hold%] - snake scan\n");
         write_response(serial, b"  STOP                            - stop motors (V 0 0)\n");
         write_response(serial, b"  HOLD [pct]                      - get/set global holding torque (0-100%)\n");
-        write_response(serial, b"  MICROSTEP [val]                 - get/set microstep mode (16/32/64)\n");
+        write_response(serial, b"  MICROSTEP [val]                 - get active / set stored microstep mode\n");
+        write_response(serial, b"  POS                             - step counts: <x> <y>\n");
+        write_response(serial, b"  BUSY                            - 1 while moving, else 0\n");
+        write_response(serial, b"  POWER [x y]                     - get/set per-axis peak duty (0-32767)\n");
         write_response(serial, b"  PING                            - returns OK\n");
         write_response(serial, b"  HELP / ?                        - show this help\n");
     } else if cmd.eq_ignore_ascii_case("MICROSTEP") {
@@ -246,8 +290,9 @@ fn handle_command(
                 write_response(serial, b"OK (takes effect after reboot)\n");
             }
             None => {
-                // Query current value
-                let current = crate::zencan::OBJECT3004.get_value();
+                // Report the mode actually in use; a stored change only
+                // applies after reboot, and the host derives um/step from this.
+                let current = crate::steppers().0.microsteps();
                 let mut buf = [0u8; 4];
                 let len = format_u16(current as u16, &mut buf);
                 write_response(serial, &buf[..len]);
@@ -281,6 +326,35 @@ fn handle_command(
                 write_response(serial, &buf[..len]);
                 write_response(serial, b"\n");
             }
+        }
+    } else if cmd.eq_ignore_ascii_case("POS") {
+        let (x, y) = crate::steppers();
+        write_pair(serial, x.step_count(), y.step_count());
+    } else if cmd.eq_ignore_ascii_case("BUSY") {
+        let busy = motion::BUSY.load(Ordering::Relaxed);
+        write_response(serial, if busy { b"1\n" } else { b"0\n" });
+    } else if cmd.eq_ignore_ascii_case("POWER") {
+        // POWER            -> effective "<x> <y>"
+        // POWER <x> <y>    -> per-axis override, 0 = back to global OBJECT3002
+        match (parts.next(), parts.next()) {
+            (None, _) => {
+                let global = crate::zencan::OBJECT3002.get_value();
+                write_pair(
+                    serial,
+                    motion::axis_power(0, global) as i32,
+                    motion::axis_power(1, global) as i32,
+                );
+            }
+            (Some(xs), Some(ys)) => match (xs.parse::<u16>(), ys.parse::<u16>()) {
+                (Ok(x), Ok(y)) if x <= motion::MAX_POWER && y <= motion::MAX_POWER => {
+                    motion::set_axis_power(0, x);
+                    motion::set_axis_power(1, y);
+                    control_notify.notify();
+                    write_response(serial, b"OK\n");
+                }
+                _ => write_response(serial, b"ERR power must be 0-32767\n"),
+            },
+            _ => write_response(serial, b"ERR usage: POWER <x> <y>\n"),
         }
     } else if cmd.eq_ignore_ascii_case("V") {
             let x_str = match parts.next() {
@@ -354,7 +428,8 @@ fn handle_command(
             return;
         }
 
-        let speed = (speed as i16).clamp(1, MAX_STEP_FREQ) as u16;
+        let speed = speed.clamp(1, MAX_STEP_FREQ as i32) as u16;
+        motion::BUSY.store(true, Ordering::Relaxed);
         motion::set_command(MotionCommand::MoveSteps {
             x_steps,
             y_steps,
@@ -418,7 +493,8 @@ fn handle_command(
             None => 0,
         };
 
-        let speed = (speed as i16).clamp(1, MAX_STEP_FREQ) as u16;
+        let speed = speed.clamp(1, MAX_STEP_FREQ as i32) as u16;
+        motion::BUSY.store(true, Ordering::Relaxed);
         motion::set_command(MotionCommand::SnakeScan {
             nx,
             ny,
