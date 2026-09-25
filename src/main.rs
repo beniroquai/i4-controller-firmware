@@ -30,8 +30,10 @@ use rtt_target::{rtt_init, set_defmt_channel};
 mod adc;
 mod can;
 mod current_control;
+mod dither;
 mod gpio;
 mod motion;
+mod sine;
 mod pwm;
 mod step_timer;
 mod stepper;
@@ -221,6 +223,8 @@ fn main() -> ! {
         (&*X_STEPPER.get(), &*Y_STEPPER.get())
     };
 
+    dither::init(CLK_FREQ);
+
     let mut x_step_timer = StepTimer::new(pac::TIM2, CLK_FREQ);
     let mut y_step_timer = StepTimer::new(pac::TIM5, CLK_FREQ);
     x_step_timer.enable_irq();
@@ -280,6 +284,7 @@ fn main() -> ! {
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::FDCAN2_IT0);
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM2);
         cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM5);
+        cortex_m::peripheral::NVIC::unmask(pac::Interrupt::TIM6_DAC);
     }
 
 
@@ -411,22 +416,21 @@ fn run_stepper_mode(
     x_stepper.set_hold_power(hold_power);
     y_stepper.set_hold_power(hold_power);
 
-    if x_vel.abs() > MIN_STEP_FREQ || y_vel.abs() > MIN_STEP_FREQ {
-        // Set the timer frequencies for the timer IRQs which will trigger steps
-        let x_reverse = *x_vel < 0;
-        let y_reverse = *y_vel < 0;
-
-        x_step_timer.set_overflow_freq(x_vel.unsigned_abs());
-        y_step_timer.set_overflow_freq(y_vel.unsigned_abs());
-        // Set the appropriate directions
-        x_stepper.enable(x_reverse);
-        y_stepper.enable(y_reverse);
-    } else {
-        // If the step frequency is too low, just turn the current off
-        x_step_timer.set_overflow_freq(0);
-        y_step_timer.set_overflow_freq(0);
-        x_stepper.disable();
-        y_stepper.disable();
+    // Per axis: an idle axis stays de-energized (or at hold current) while the
+    // other one moves. Enabling both used to leave the idle axis in Forward mode
+    // with zero duty; the dither refresh then energized it, and the extra
+    // current blocked marginal moves on the moving axis (E5).
+    for (vel, timer, stepper) in [
+        (*x_vel, &mut *x_step_timer, x_stepper),
+        (*y_vel, &mut *y_step_timer, y_stepper),
+    ] {
+        if vel.abs() > MIN_STEP_FREQ {
+            timer.set_overflow_freq(vel.unsigned_abs());
+            stepper.enable(vel < 0);
+        } else {
+            timer.set_overflow_freq(0);
+            stepper.disable();
+        }
     }
 }
 
@@ -810,5 +814,16 @@ fn TIM5() {
 
     unsafe {
         (*Y_STEPPER.get()).step();
+    }
+}
+
+#[pac::interrupt]
+fn TIM6_DAC() {
+    pac::TIM6.sr().write(|w| w.0 = 0);
+    if dither::tick() {
+        unsafe {
+            (*X_STEPPER.get()).refresh();
+            (*Y_STEPPER.get()).refresh();
+        }
     }
 }

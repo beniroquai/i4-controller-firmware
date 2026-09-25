@@ -359,7 +359,7 @@ cargo embed --release
 ```
 V 200 -200  → setzt X=500, Y=-500 steps/s → OK\n
 → bewegt X=+1000, Y=-500 steps @ 800 steps/s → OK\n
-MOVE 100 50 100   # relative motion in steps
+MOVE 100 0 100   # relative motion in steps
 MOVE -1000 -500 300
 MOVE -100 -50 100 # relative motion in steps
 MOVE 200 0          → bewegt X=+200, Y=0 steps @ default speed → OK\n
@@ -386,6 +386,15 @@ BUSY             → "1" while a MOVE/SNAKE runs or motors still step, else "0"
 POWER            → "<x> <y>"  effective per-axis peak duty
 POWER 8000 18000 → per-axis peak duty 0..32767, 0 = use global default (not persisted)
 MICROSTEP        → mode actually running (a stored change applies after reboot)
+ACCEL            → acceleration limit in µsteps/s² (default 1500)
+ACCEL 20000      → set it, 0 = no limit (not persisted)
+PHASE X 5        → phase correction of µstep 5 on X, 1/1024 cycle
+PHASE Y 5 -12    → set it (clamped ±256, not persisted); all zero = plain sine table
+PHASE Y RESET    → zero the table of an axis
+DITHER           → "<mode> <amp> <freq>"
+DITHER 1 32 300  → phase dither ±32/1024 cycle at 300 Hz (applied only while an axis is energized)
+DITHER 2 30 300  → amplitude dither ±30 % at 300 Hz
+DITHER 0 0 0     → off (TIM6 20 kHz tick then does nothing; not persisted)
 ```
 
 `MOVE` replies `OK` immediately and runs in the background. Poll `BUSY` before

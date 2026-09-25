@@ -24,9 +24,13 @@ use core::cell::Cell;
 
 use critical_section::Mutex;
 use crossbeam::atomic::AtomicCell;
-use portable_atomic::{AtomicBool, AtomicI32, AtomicU16, Ordering};
+use portable_atomic::{AtomicBool, AtomicI16, AtomicI32, AtomicU16, Ordering};
 
 use crate::current_control::IChannel;
+use crate::sine::sin1024;
+
+/// Largest phase correction accepted, in 1/1024 cycle (±90° electrical).
+pub const MAX_PHASE_CORR: i16 = 256;
 
 /// Microstepping resolution options.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,6 +182,9 @@ pub struct Stepper<'a> {
     /// When set, step() refuses to move past `target` (exact stop for MOVE).
     has_target: AtomicBool,
     target: AtomicI32,
+    /// Per-microstep commutation phase offset, 1/1024 cycle (E4 calibration).
+    /// All zero reproduces the plain sine table exactly.
+    phase_corr: [AtomicI16; 64],
 }
 
 impl<'a> Stepper<'a> {
@@ -203,6 +210,7 @@ impl<'a> Stepper<'a> {
             step_count: AtomicI32::new(0),
             has_target: AtomicBool::new(false),
             target: AtomicI32::new(0),
+            phase_corr: [const { AtomicI16::new(0) }; 64],
         }
     }
 
@@ -258,11 +266,11 @@ impl<'a> Stepper<'a> {
         
         critical_section::with(|cs| {
             let stepper_pos = self.stepper_pos.borrow(cs).get();
-            let (a, b) = self.stepper.get(stepper_pos as usize);
+            let (a, b) = self.currents(stepper_pos as usize);
             let phase_a = self.phase_a.borrow(cs);
             let phase_b = self.phase_b.borrow(cs);
-            phase_a.set_duty_cycle((a * hold_power as i32 / 32768) as i16);
-            phase_b.set_duty_cycle((b * hold_power as i32 / 32768) as i16);
+            phase_a.set_duty_cycle(Self::duty(a, hold_power as i32));
+            phase_b.set_duty_cycle(Self::duty(b, hold_power as i32));
         });
     }
 
@@ -331,14 +339,70 @@ impl<'a> Stepper<'a> {
             self.stepper_pos.borrow(cs).set(new_pos);
         });
 
-        let (a, b) = self.stepper.get(new_pos as usize);
+        let (a, b) = self.currents(new_pos as usize);
         let power = self.power.load() as i32;
         critical_section::with(|cs| {
             let phase_a = self.phase_a.borrow(cs);
             let phase_b = self.phase_b.borrow(cs);
-            phase_a.set_duty_cycle((a * power / 32768) as i16);
-            phase_b.set_duty_cycle((b * power / 32768) as i16);
+            phase_a.set_duty_cycle(Self::duty(a, power));
+            phase_b.set_duty_cycle(Self::duty(b, power));
         });
+    }
+
+    /// Phase currents (a = sin, b = cos, peak 32767) for microstep `pos`,
+    /// including the per-step phase correction.
+    fn currents(&self, pos: usize) -> (i32, i32) {
+        let n = self.stepper.nsteps();
+        let pos = pos % n;
+        let phase = (pos * 1024 / n) as i32
+            + self.phase_corr[pos].load(Ordering::Relaxed) as i32
+            + crate::dither::PHASE_OFF.load(Ordering::Relaxed) as i32;
+        // gain is exactly 32767 without amplitude dither, so this is lossless then.
+        // Not clamped here (up to ±65534): duty() clamps the final value, so
+        // amplitude dither only clips when the drive itself saturates.
+        let g = crate::dither::GAIN.load(Ordering::Relaxed);
+        (sin1024(phase) * g / 32767, sin1024(phase + 256) * g / 32767)
+    }
+
+    /// Signed duty for a phase current (from currents()) at a peak duty `power`.
+    fn duty(current: i32, power: i32) -> i16 {
+        (current * power / 32768).clamp(-32767, 32767) as i16
+    }
+
+    /// Re-apply the currents for the present position (dither tick).
+    /// Does nothing while the axis is de-energized.
+    pub fn refresh(&self) {
+        let power = match self.mode.load() {
+            Mode::Off => return,
+            Mode::Hold => self.power.load() as i32 * self.hold_power_pct.load(Ordering::Relaxed) as i32 / 100,
+            Mode::Forward | Mode::Reverse => self.power.load() as i32,
+        };
+        critical_section::with(|cs| {
+            let pos = self.stepper_pos.borrow(cs).get();
+            let (a, b) = self.currents(pos as usize);
+            self.phase_a.borrow(cs).set_duty_cycle(Self::duty(a, power));
+            self.phase_b.borrow(cs).set_duty_cycle(Self::duty(b, power));
+        });
+    }
+
+    /// Set the phase correction for one microstep (1/1024 cycle, clamped).
+    /// Returns false if `pos` is outside the active microstep range.
+    pub fn set_phase_corr(&self, pos: usize, corr: i16) -> bool {
+        if pos >= self.stepper.nsteps() {
+            return false;
+        }
+        self.phase_corr[pos].store(corr.clamp(-MAX_PHASE_CORR, MAX_PHASE_CORR), Ordering::Relaxed);
+        true
+    }
+
+    pub fn phase_corr(&self, pos: usize) -> i16 {
+        self.phase_corr[pos % 64].load(Ordering::Relaxed)
+    }
+
+    pub fn reset_phase_corr(&self) {
+        for c in &self.phase_corr {
+            c.store(0, Ordering::Relaxed);
+        }
     }
 
     /// Never step past `target` until clear_target() is called.

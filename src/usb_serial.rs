@@ -16,6 +16,10 @@
 //! | `BUSY\n`                                         | `1` while a move/scan runs or motors step  |
 //! | `POWER [x y]\n`                                  | Get/set per-axis peak duty (0-32767)       |
 //! | `MICROSTEP [n]\n`                                | Get active / set stored microstep mode     |
+//! | `ACCEL [n]\n`                                    | Get/set accel limit, steps/s² (0 = none)   |
+//! | `PHASE <X\|Y> <k> [v]\n`                         | Get/set phase corr of µstep k, 1/1024 cycle |
+//! | `PHASE <X\|Y> RESET\n`                           | Zero the phase correction table of an axis  |
+//! | `DITHER [mode amp freq]\n`                       | 0 off, 1 phase ±amp/1024 cyc, 2 ampl ±amp % |
 //! | `PING\n`                                         | Returns `OK\n`                             |
 //! | `HELP\n` / `?`                                   | Show available commands                    |
 //!
@@ -268,6 +272,9 @@ fn handle_command(
         write_response(serial, b"  POS                             - step counts: <x> <y>\n");
         write_response(serial, b"  BUSY                            - 1 while moving, else 0\n");
         write_response(serial, b"  POWER [x y]                     - get/set per-axis peak duty (0-32767)\n");
+        write_response(serial, b"  ACCEL [n]                       - get/set accel limit steps/s^2 (0 = none)\n");
+        write_response(serial, b"  PHASE <X|Y> <k> [v] | RESET     - get/set phase corr of ustep k (1/1024 cycle)\n");
+        write_response(serial, b"  DITHER [mode amp freq]          - 0 off, 1 phase +-amp/1024 cyc, 2 ampl +-amp %\n");
         write_response(serial, b"  PING                            - returns OK\n");
         write_response(serial, b"  HELP / ?                        - show this help\n");
     } else if cmd.eq_ignore_ascii_case("MICROSTEP") {
@@ -333,6 +340,98 @@ fn handle_command(
     } else if cmd.eq_ignore_ascii_case("BUSY") {
         let busy = motion::BUSY.load(Ordering::Relaxed);
         write_response(serial, if busy { b"1\n" } else { b"0\n" });
+    } else if cmd.eq_ignore_ascii_case("PHASE") {
+        // PHASE X 5       -> correction of microstep 5 on X
+        // PHASE X 5 -12   -> set it (1/1024 cycle, clamped to +-256); not persisted
+        // PHASE X RESET   -> all zero
+        let (x, y) = crate::steppers();
+        let stepper = match parts.next() {
+            Some(a) if a.eq_ignore_ascii_case("X") => x,
+            Some(a) if a.eq_ignore_ascii_case("Y") => y,
+            _ => {
+                write_response(serial, b"ERR axis must be X or Y\n");
+                return;
+            }
+        };
+        match parts.next() {
+            Some(k) if k.eq_ignore_ascii_case("RESET") => {
+                stepper.reset_phase_corr();
+                write_response(serial, b"OK\n");
+            }
+            Some(k) => {
+                let k: usize = match k.parse() {
+                    Ok(v) if v < stepper.microsteps() => v,
+                    _ => {
+                        write_response(serial, b"ERR bad microstep index\n");
+                        return;
+                    }
+                };
+                match parts.next() {
+                    None => {
+                        let mut buf = [0u8; 12];
+                        let len = format_i32(stepper.phase_corr(k) as i32, &mut buf);
+                        buf[len] = b'\n';
+                        write_response(serial, &buf[..len + 1]);
+                    }
+                    Some(v) => match v.parse::<i16>() {
+                        Ok(v) => {
+                            stepper.set_phase_corr(k, v);
+                            write_response(serial, b"OK\n");
+                        }
+                        Err(_) => write_response(serial, b"ERR bad value\n"),
+                    },
+                }
+            }
+            None => write_response(serial, b"ERR usage: PHASE <X|Y> <k> [v] | RESET\n"),
+        }
+    } else if cmd.eq_ignore_ascii_case("DITHER") {
+        // DITHER              -> "<mode> <amp> <freq>"
+        // DITHER 1 32 500     -> phase dither ±32/1024 cycle at 500 Hz (not persisted)
+        // DITHER 2 30 200     -> amplitude dither ±30 % at 200 Hz
+        // DITHER 0 0 0        -> off
+        match (parts.next(), parts.next(), parts.next()) {
+            (None, _, _) => {
+                let (m, a, fq) = crate::dither::get();
+                let mut buf = [0u8; 24];
+                let mut len = format_i32(m as i32, &mut buf);
+                buf[len] = b' '; len += 1;
+                len += format_i32(a as i32, &mut buf[len..]);
+                buf[len] = b' '; len += 1;
+                len += format_i32(fq as i32, &mut buf[len..]);
+                buf[len] = b'\n';
+                write_response(serial, &buf[..len + 1]);
+            }
+            (Some(m), Some(a), Some(fq)) => match (m.parse::<u8>(), a.parse::<u16>(), fq.parse::<u16>()) {
+                (Ok(m), Ok(a), Ok(fq)) if m <= 2
+                    && (m != 1 || a <= 256)
+                    && (m != 2 || a <= 100)
+                    && fq <= crate::dither::MAX_FREQ =>
+                {
+                    crate::dither::set(m, a, fq);
+                    write_response(serial, b"OK\n");
+                }
+                _ => write_response(serial, b"ERR mode 0-2, phase amp <=256, ampl amp <=100, freq <=5000\n"),
+            },
+            _ => write_response(serial, b"ERR usage: DITHER <mode> <amp> <freq>\n"),
+        }
+    } else if cmd.eq_ignore_ascii_case("ACCEL") {
+        // Not persisted; read by the control loop and MOVE deceleration every tick.
+        match parts.next() {
+            Some(v) => match v.parse::<u16>() {
+                Ok(a) => {
+                    crate::zencan::OBJECT3001.set_value(a);
+                    control_notify.notify();
+                    write_response(serial, b"OK\n");
+                }
+                Err(_) => write_response(serial, b"ERR accel must be 0-65535\n"),
+            },
+            None => {
+                let mut buf = [0u8; 8];
+                let len = format_u16(crate::zencan::OBJECT3001.get_value(), &mut buf);
+                buf[len] = b'\n';
+                write_response(serial, &buf[..len + 1]);
+            }
+        }
     } else if cmd.eq_ignore_ascii_case("POWER") {
         // POWER            -> effective "<x> <y>"
         // POWER <x> <y>    -> per-axis override, 0 = back to global OBJECT3002
